@@ -1,0 +1,22 @@
+if ~(VERSION < v"1.1-")
+    include("interval_special_functions.jl")
+end
+
+include("arithmetic.jl")
+include("convex_increasing.jl")
+include("concave_increasing.jl")
+include("mixed_convexity.jl")
+include("extrema.jl")
+include("division.jl")
+include("multiplication.jl")
+include("power.jl")
+include("other.jl")
+include("activation_functions.jl")
+include("set_bounds.jl")
+include("comparison.jl")
+include("trilinear.jl")
+include("apriori_mult.jl")
+
+#joinpath(@__DIR__, "no_gradient", "arithmetic.jl")
+#joinpath(@__DIR__, "no_gradient", "convex_increasing.jl")
+#joinpath(@__DIR__, "no_gradient", "mixed_convexity.jl")
