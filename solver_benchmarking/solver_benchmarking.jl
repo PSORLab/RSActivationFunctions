@@ -3,7 +3,7 @@ module SolverBenchmarking
 
 export summarize_results, run_solver_benchmark, BenchmarkParams
 
-using Distributed, JSON, ProgressMeter, DataFrames, CSV
+using JSON, DataFrames, CSV
 using MINLPLib, JuMP, EAGO
 
 """

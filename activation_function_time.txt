@@ -1,0 +1,7 @@
+Softplus | env = 171.87 | exp = 158.05 | ratio = 8.744068332806076
+Maxsig | env = 133.67 | exp = 384.48 | ratio = -65.2335622138993
+MaxTanh | env = 23081.04 | exp = 14912.195 | ratio = 54.77962835115824
+Softsign | env = 918.87 | exp = 19.89 | ratio = 4519.758672699849
+Sigmoid | env = 897.85 | exp = 220.62 | ratio = 306.96673012419546
+Silu | env = 1405.07 | exp = 188.96 | ratio = 643.580651989839
+Gelu | env = 249106.23 | exp = 135452.9 | ratio = 83.90616221579606
