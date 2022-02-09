@@ -25,8 +25,8 @@ end
 
 function scip_factory()
     m = SCIP.Optimizer()
-    MOI.set(optimizer, SCIP.Param("limits/gap"), 1E-4)
-    MOI.set(optimizer, SCIP.Param("limits/absgap"), 1E-4)
+    MOI.set(m, SCIP.Param("limits/gap"), 1E-4)
+    MOI.set(m, SCIP.Param("limits/absgap"), 1E-4)
     m
 end
 
@@ -34,6 +34,7 @@ function eago_factory()
     m = EAGO.Optimizer()
     MOI.set(m, MOI.RawParameter("absolute_tolerance"), 1E-4)
     MOI.set(m, MOI.RawParameter("relative_tolerance"), 1E-4)
+    set_optimizer_attribute(m, "mul_relax_style", 0)
     m
 end
 
@@ -141,7 +142,7 @@ create_lib_files && create_lib()
 
 expr_solvers = Dict{String,Any}()
 expr_solvers["SCIP"]  = scip_factory
-expr_solvers["EAGO"]  = eago_factory
+#expr_solvers["EAGO"]  = eago_factory
 expr_solvers["BARON"] = baron_factory
 
 env_solvers = Dict{String,Any}()

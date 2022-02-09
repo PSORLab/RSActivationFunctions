@@ -88,15 +88,25 @@ function benchmark_problem(opt_factory::Any, solver_name::String, lib::String, l
     @show !isfile(file_path)
     if !isfile(file_path) || params.rerun
         m, t = fetch_and_optimize(lib, model_name, opt_factory, params)
-        @show t
+
+        obj_val = Inf
+        obj_bnd = -Inf
+        try
+            obj_val = objective_value(m)
+            obj_bnd = objective_bound(m)
+        catch e
+            obj_val = Inf
+            obj_bnd = -Inf
+        end
+
 
         data = Dict{String,Any}()
         data["SolverName"] = solver_name
         data["InstanceName"] = model_name
         data["TerminationStatus"] = string(termination_status(m))
         data["PrimalStatus"] = string(primal_status(m))
-        data["ObjBound"] = params.has_obj_bnd ? objective_bound(m) : -Inf
-        data["ObjValue"] = objective_value(m)
+        data["ObjBound"] = params.has_obj_bnd ? obj_bnd : -Inf
+        data["ObjValue"] = obj_val
         data["SolveTime"] = solve_time(m)
         data["SolveTimeRaw"] = t
         data["CompletedSolveTime"] = (termination_status(m) == MOI.OPTIMAL) ? solve_time(m) : 100.0
