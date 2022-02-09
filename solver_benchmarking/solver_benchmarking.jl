@@ -85,8 +85,10 @@ then fetch the model, optimize it and store results to a JSON file at the path (
 """
 function benchmark_problem(opt_factory::Any, solver_name::String, lib::String, libout::String, model_name::String, p::String, params::BenchmarkParams)
     file_path = joinpath(p, libout, "$(solver_name)_$(model_name).json")
+    @show !isfile(file_path)
     if !isfile(file_path) || params.rerun
         m, t = fetch_and_optimize(lib, model_name, opt_factory, params)
+        @show t
 
         data = Dict{String,Any}()
         data["SolverName"] = solver_name
@@ -132,6 +134,7 @@ function run_solver_benchmark(p::String, s::Dict{String,Any}, lib::String, libou
     n = MINLPLib.fetch_names(lib)
     for (k,v) in s
         println("Running all benchmarks problems for solver = $(k)")
+        @show length(n)
         for ni in n
             println("Running problem = $ni in $lib")
             benchmark_problem(v, k, lib, libout, ni, p, params)
