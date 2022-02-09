@@ -139,7 +139,6 @@ end
 create_lib_files = false
 create_lib_files && create_lib()
 
-
 expr_solvers = Dict{String,Any}()
 expr_solvers["SCIP"]  = scip_factory
 expr_solvers["EAGO"]  = eago_factory
@@ -150,13 +149,13 @@ env_solvers["EAGO"] = eago_factory
 
 params = SolverBenchmarking.BenchmarkParams(time = 100, rerun = false, has_obj_bnd = false)
 
-result_path = "solver_benchmark_result"
+result_path = joinpath(@__DIR__, "solver_benchmark_result")
 
 SolverBenchmarking.run_solver_benchmark(result_path, env_solvers, "ANN_Env", "ANN_Env"; params = params)
 SolverBenchmarking.run_solver_benchmark(result_path, expr_solvers, "ANN_Expr", "ANN_Expr"; params = params)
 
-#SolverBenchmarking.summarize_results("ANN_Env", result_path)
-#SolverBenchmarking.summarize_results("ANN_Expr", result_path)
+SolverBenchmarking.summarize_results("ANN_Env", result_path)
+SolverBenchmarking.summarize_results("ANN_Expr", result_path)
 
 #=
 new_lib = "ANN_Expr"

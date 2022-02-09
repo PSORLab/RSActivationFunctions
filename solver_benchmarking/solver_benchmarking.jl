@@ -167,7 +167,7 @@ function summarize_results(lib::String, p::String)
     df.RelativeGap = abs.(df.ObjValue - df.ObjBound)./min.(abs.(df.ObjValue), abs.(df.ObjBound))
     df.AbsoluteGap = df.ObjValue - df.ObjBound
     df.SolvedInTime = df.SolveTime .< param_dict["time"]
-    CSV.write(joinpath(p, "result_summary.csv"), df)
+    CSV.write(joinpath(folder_path, "result_summary.csv"), df)
     return
 end
 
