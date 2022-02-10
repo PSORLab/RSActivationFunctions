@@ -11,7 +11,7 @@ Pkg.add("JuMP"); Pkg.add("IntervalArithmetic");
 include(joinpath(@__DIR__, "solver_benchmarking.jl"))
 
 # Loads relevent modules
-using JuMP, MINLPLib, SCIP, EAGO, IntervalArithmetic, GAMS
+using JuMP, MINLPLib, SCIP, EAGO, IntervalArithmetic, GAMS, CSV, DataFrames
 
 function baron_factory()
     m = GAMS.Optimizer(GAMS.GAMSWorkspace("C:\\GAMS\\37"))
@@ -34,7 +34,7 @@ function eago_factory()
     m = EAGO.Optimizer()
     MOI.set(m, MOI.RawParameter("absolute_tolerance"), 1E-4)
     MOI.set(m, MOI.RawParameter("relative_tolerance"), 1E-4)
-    set_optimizer_attribute(m, "mul_relax_style", 0)
+    MOI.set(m, MOI.RawParameter("mul_relax_style"), 0)
     m
 end
 
@@ -109,7 +109,7 @@ function create_lib()
     variable_range = 2:6
     layer_range = 1:4
     neuron_per_layer_range = 2:6
-    act_func = [sigmoid; silu; softsign; softplus]
+    act_func = [sigmoid; silu; gelu; softplus]
     minlp_folder_instances = joinpath(@__DIR__, "MINLPLib.jl", "instances")
 
     for i = 1:instance_number
@@ -137,12 +137,12 @@ function create_lib()
 end
 
 # set create_lib_files to true to generate new ANNs in the problem libary
-create_lib_files = false
+create_lib_files = true
 create_lib_files && create_lib()
 
 expr_solvers = Dict{String,Any}()
 expr_solvers["SCIP"]  = scip_factory
-#expr_solvers["EAGO"]  = eago_factory
+expr_solvers["EAGO"]  = eago_factory
 expr_solvers["BARON"] = baron_factory
 
 env_solvers = Dict{String,Any}()
@@ -157,6 +157,22 @@ SolverBenchmarking.run_solver_benchmark(result_path, expr_solvers, "ANN_Expr", "
 
 SolverBenchmarking.summarize_results("ANN_Env", result_path)
 SolverBenchmarking.summarize_results("ANN_Expr", result_path)
+
+df_env = DataFrame(CSV.File(joinpath(result_path, "ANN_Env", "result_summary.csv")))
+df_expr = DataFrame(CSV.File(joinpath(result_path, "ANN_Expr", "result_summary.csv")))
+df_env.Form = ["Exp" for i=1:size(df_env,1)]
+df_expr.Form = ["Env" for i=1:size(df_expr,1)]
+
+df_comb = vcat(df_env, df_expr)
+df_comb.FullSolverName = df_comb.SolverName*" "*df_comb.Form
+df_comb.ShiftedSolveTime = df_comb.SolveTime + 1
+df_comb.ActFunc = right(left(df_comb.InstanceName, 7), 4)
+
+gdf_comb = groupby(df_comb, Symbol[:FullSolverName, :ActFunc])
+@show combine(gdf_comb, :SolvedInTime => x -> StatsBase.geomean(x) - 1)
+
+gdf_status = groupby(df_comb, Symbol[:FullSolverName, :SolvedInTime])
+@show combine(gdf, :SolvedInTime => x -> StatsBase.geomean(x) - 1)
 
 #=
 new_lib = "ANN_Expr"
