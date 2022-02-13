@@ -5,13 +5,15 @@ Pkg.develop(path = joinpath(@__DIR__, "MINLPLib.jl"))
 Pkg.develop(path = joinpath(@__DIR__, "EAGO.jl-SIPextension"))
 Pkg.add("McCormick")
 Pkg.add("JSON"); Pkg.add("DataFrames"); Pkg.add("CSV")
-Pkg.add("JuMP"); Pkg.add("IntervalArithmetic");
+Pkg.add("JuMP"); Pkg.add("IntervalArithmetic"); Pkg.add("LaTeXStrings")
+Pkg.add("Plots"); Pkg.add("StatsBase")
 
 # Loads solver_benchmarking module
 include(joinpath(@__DIR__, "solver_benchmarking.jl"))
 
 # Loads relevent modules
-using JuMP, MINLPLib, SCIP, EAGO, IntervalArithmetic, GAMS, CSV, DataFrames
+using JuMP, MINLPLib, SCIP, EAGO, IntervalArithmetic, GAMS
+using CSV, DataFrames, LaTeXStrings, Plots, StatsBase
 
 function baron_factory()
     m = GAMS.Optimizer(GAMS.GAMSWorkspace("C:\\GAMS\\37"))
@@ -105,7 +107,7 @@ softplus(x::String; lib = true) = lib ? "softplus("*x*")" : "log(1 + exp("*x*"))
 maxsig(x::String; lib = true) =   lib ? "maxsig("*x*")"   : "max("*x*", 1/(1 + exp(-("*x*"))))"
 
 function create_lib()
-    instance_number = 50
+    instance_number = 100
     variable_range = 2:6
     layer_range = 1:4
     neuron_per_layer_range = 2:6
@@ -137,7 +139,7 @@ function create_lib()
 end
 
 # set create_lib_files to true to generate new ANNs in the problem libary
-create_lib_files = true
+create_lib_files = false
 create_lib_files && create_lib()
 
 expr_solvers = Dict{String,Any}()
@@ -148,7 +150,7 @@ expr_solvers["BARON"] = baron_factory
 env_solvers = Dict{String,Any}()
 env_solvers["EAGO"] = eago_factory
 
-params = SolverBenchmarking.BenchmarkParams(time = 100, rerun = false, has_obj_bnd = false)
+params = SolverBenchmarking.BenchmarkParams(time = 100, rerun = false, has_obj_bnd = true)
 
 result_path = joinpath(@__DIR__, "solver_benchmark_result")
 
@@ -160,19 +162,58 @@ SolverBenchmarking.summarize_results("ANN_Expr", result_path)
 
 df_env = DataFrame(CSV.File(joinpath(result_path, "ANN_Env", "result_summary.csv")))
 df_expr = DataFrame(CSV.File(joinpath(result_path, "ANN_Expr", "result_summary.csv")))
-df_env.Form = ["Exp" for i=1:size(df_env,1)]
-df_expr.Form = ["Env" for i=1:size(df_expr,1)]
+df_env.Form = ["Env" for i=1:size(df_env,1)]
+df_expr.Form = ["Exp" for i=1:size(df_expr,1)]
 
 df_comb = vcat(df_env, df_expr)
-df_comb.FullSolverName = df_comb.SolverName*" "*df_comb.Form
-df_comb.ShiftedSolveTime = df_comb.SolveTime + 1
-df_comb.ActFunc = right(left(df_comb.InstanceName, 7), 4)
+df_comb[!,:FullSolverName] = map((x,y) -> string(x)*" "*string(y), df_comb.SolverName, df_comb.Form)
+df_comb.SolveTime = map((x,y) -> ifelse(occursin("INFEASIBLE",x), 100.0, y), df_comb.TerminationStatus, df_comb.SolveTime)
+df_comb.ShiftedSolveTime = df_comb.SolveTime .+ 1
+df_comb.CorrectlySolved = map(x -> (occursin("OPTIMAL",x) || occursin("LOCALLY_SOLVED",x)), df_comb.TerminationStatus)
 
-gdf_comb = groupby(df_comb, Symbol[:FullSolverName, :ActFunc])
-@show combine(gdf_comb, :SolvedInTime => x -> StatsBase.geomean(x) - 1)
+df_comb.IncorrectFeasibility = map(x -> occursin("INFEASIBLE",x), df_comb.TerminationStatus)
+# Presolve infeasibility in SCIP is labelled as OPTIMIZE_NOT_CALLED...
+df_comb.IncorrectFeasibility = map((x,y,z) -> ifelse(occursin("SCIP",x) & occursin("NOT_CALLED",y), true, z), df_comb.SolverName, df_comb.TerminationStatus, df_comb.IncorrectFeasibility)
+function drop_num_underscore(x)
+    y = replace(x, "_" => "")
+    for i=0:9
+        y = replace(y, "$i" => "")
+    end
+    return y
+end
+df_comb.ActFunc = map(drop_num_underscore, df_comb.InstanceName)
 
-gdf_status = groupby(df_comb, Symbol[:FullSolverName, :SolvedInTime])
-@show combine(gdf, :SolvedInTime => x -> StatsBase.geomean(x) - 1)
+#df_comb_cs = df_comb[df_comb.CorrectlySolved,:]
+gdf_comb_cs = groupby(df_comb, Symbol[:FullSolverName, :ActFunc])
+@show combine(gdf_comb_cs, :ShiftedSolveTime => x -> StatsBase.geomean(x) - 1)
+
+gdf_combt_correct = groupby(df_comb , Symbol[:FullSolverName, :CorrectlySolved, :ActFunc])
+@show combine(gdf_combt_correct, :ShiftedSolveTime => x -> count(fill(true,length(x))))
+
+df_comb_infeas = df_comb[df_comb.IncorrectFeasibility,:]
+df_check_infeasible  = groupby(df_comb_infeas, Symbol[:FullSolverName, :ActFunc])
+@show combine(df_check_infeasible, :SolveTime => x -> count(fill(true,length(x))))
+
+#gdf_status = groupby(df_comb, Symbol[:FullSolverName, :SolvedInTime])
+env_folder = joinpath(@__DIR__, "MINLPLib.jl", "instances", "ANN_Env")
+name_anns = filter(x -> !occursin("gelu",x), readdir(joinpath(env_folder)))
+
+trunc_solved_time = rand(300, 4)
+@show length(name_anns)
+for (i,n) in enumerate(name_anns)
+    plt_sdf = df_comb[occursin.(n[1:end-3], string.(df_comb.InstanceName)), :]
+    trunc_solved_time[i,3] = plt_sdf[plt_sdf.FullSolverName .== "SCIP Exp",:].SolveTime[1]  # SCIP
+    trunc_solved_time[i,4] = plt_sdf[plt_sdf.FullSolverName .== "BARON Exp",:].SolveTime[1] # BARON
+    trunc_solved_time[i,1] = plt_sdf[plt_sdf.FullSolverName .== "EAGO Env",:].SolveTime[1]  # EAGO Env Entry
+    trunc_solved_time[i,2] = plt_sdf[plt_sdf.FullSolverName .== "EAGO Exp",:].SolveTime[1]  # EAGO Exp Entry
+end
+plt = performance_profile(PlotsBackend(), trunc_solved_time, ["EAGO (Envelope)", "EAGO (McCormick)", "SCIP", "BARON"], linewidth = 3, linestyles=[:solid, :dash, :dashdot, :dot], legend=:bottomright)
+xlabel!("\$\\tau\$")
+xlims!(0.0,6.5)
+ylabel!("\$P(r_{p,s} \\leq \\tau : 1 \\leq s \\leq n_s)\$")
+ylims!(0.2,1.0)
+savefig(plt, joinpath(result_path, "performance_profile.pdf")
+show(plt)
 
 #=
 new_lib = "ANN_Expr"

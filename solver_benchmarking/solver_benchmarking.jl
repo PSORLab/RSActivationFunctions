@@ -71,7 +71,10 @@ function fetch_and_optimize(lib::String, model_name::String, opt_factory::Any, p
     set_silent(m)
 
     t = time()
-    JuMP.optimize!(m)
+    try
+        JuMP.optimize!(m)
+    catch
+    end
     t = time() - t
 
     finalize(backend(m))
@@ -90,12 +93,25 @@ function benchmark_problem(opt_factory::Any, solver_name::String, lib::String, l
         m, t = fetch_and_optimize(lib, model_name, opt_factory, params)
 
         obj_val = Inf
-        obj_bnd = -Inf
+        s_time = params.time
+        t_status = MOI.OPTIMIZE_NOT_CALLED
+        p_status = MOI.NO_SOLUTION
         try
             obj_val = objective_value(m)
-            obj_bnd = objective_bound(m)
+            s_time = solve_time(m)
+            t_status = termination_status(m)
+            p_status = primal_status(m)
         catch e
             obj_val = Inf
+            s_time = params.time
+            t_status = MOI.OPTIMIZE_NOT_CALLED
+            p_status = MOI.NO_SOLUTION
+        end
+
+        obj_bnd = -Inf
+        try
+            obj_bnd = objective_bound(m)            
+        catch e
             obj_bnd = -Inf
         end
 
@@ -103,13 +119,13 @@ function benchmark_problem(opt_factory::Any, solver_name::String, lib::String, l
         data = Dict{String,Any}()
         data["SolverName"] = solver_name
         data["InstanceName"] = model_name
-        data["TerminationStatus"] = string(termination_status(m))
-        data["PrimalStatus"] = string(primal_status(m))
+        data["TerminationStatus"] = string(t_status)
+        data["PrimalStatus"] = string(p_status)
         data["ObjBound"] = params.has_obj_bnd ? obj_bnd : -Inf
         data["ObjValue"] = obj_val
-        data["SolveTime"] = solve_time(m)
+        data["SolveTime"] = s_time
         data["SolveTimeRaw"] = t
-        data["CompletedSolveTime"] = (termination_status(m) == MOI.OPTIMAL) ? solve_time(m) : 100.0
+        data["CompletedSolveTime"] = (t_status == MOI.OPTIMAL) ? s_time : 100.0
         data["Error"] = false
 
         open(file_path,"w") do f
