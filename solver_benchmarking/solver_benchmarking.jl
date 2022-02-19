@@ -88,7 +88,6 @@ then fetch the model, optimize it and store results to a JSON file at the path (
 """
 function benchmark_problem(opt_factory::Any, solver_name::String, lib::String, libout::String, model_name::String, p::String, params::BenchmarkParams)
     file_path = joinpath(p, libout, "$(solver_name)_$(model_name).json")
-    @show !isfile(file_path)
     if !isfile(file_path) || params.rerun
         m, t = fetch_and_optimize(lib, model_name, opt_factory, params)
 
@@ -147,7 +146,7 @@ function run_solver_benchmark(p::String, s::Dict{String,Any}, lib::String, libou
     # store parameter file
     !isdir(p) && mkdir(p)
     !isdir(joinpath(p, lib)) && mkdir(joinpath(p, lib))
-    file_path = joinpath(p, lib, "parameters.json")
+    file_path = joinpath(p, libout, "parameters.json")
     data = Dict{String,Any}()
     data["time"] = params.time
     data["threads_per"] = params.threads_per
@@ -184,9 +183,7 @@ function summarize_results(lib::String, p::String)
         d = joinpath(folder_path, file) |> open |> JSON.parse
         obj_bnd = isnothing(d["ObjBound"]) ? -Inf : d["ObjBound"]
         obj_val = isnothing(d["ObjValue"]) ? Inf : d["ObjValue"]
-        @show d["SolverName"], d["InstanceName"], d["TerminationStatus"], d["PrimalStatus"],  obj_bnd, obj_val, d["SolveTime"], d["SolveTimeRaw"], d["CompletedSolveTime"], d["Error"]
-        push!(df, (d["SolverName"], d["InstanceName"], d["TerminationStatus"], d["PrimalStatus"], #d["DualStatus"],
-                   obj_bnd, obj_val, d["SolveTime"], d["SolveTimeRaw"], d["CompletedSolveTime"], d["Error"]))
+        push!(df, (d["SolverName"], d["InstanceName"], d["TerminationStatus"], d["PrimalStatus"], obj_bnd, obj_val, d["SolveTime"], d["SolveTimeRaw"], d["CompletedSolveTime"], d["Error"]))
     end
 
     param_dict = joinpath(p, lib, "parameters.json") |> open |> JSON.parse
