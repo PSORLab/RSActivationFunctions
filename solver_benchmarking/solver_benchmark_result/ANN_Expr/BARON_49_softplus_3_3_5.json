@@ -1,0 +1,1 @@
+{"SolverName":"BARON","ObjBound":5.40387500889,"SolveTime":0.54,"PrimalStatus":"FEASIBLE_POINT","InstanceName":"49_softplus_3_3_5","SolveTimeRaw":0.9220001697540283,"CompletedSolveTime":100.0,"ObjValue":5.4044153963929915,"Error":false,"TerminationStatus":"LOCALLY_SOLVED"}

@@ -1,0 +1,1 @@
+{"SolverName":"SCIP","ObjBound":2.2335897679539767,"SolveTime":0.0,"PrimalStatus":"FEASIBLE_POINT","InstanceName":"33_softplus_3_1_4","SolveTimeRaw":0.3560001850128174,"CompletedSolveTime":0.0,"ObjValue":2.23372410717061,"Error":false,"TerminationStatus":"OPTIMAL"}

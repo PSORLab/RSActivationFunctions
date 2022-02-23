@@ -1,0 +1,1 @@
+{"SolverName":"SCIP","ObjBound":0.39623310873363393,"SolveTime":2.0,"PrimalStatus":"FEASIBLE_POINT","InstanceName":"30_silu_4_1_3","SolveTimeRaw":1.5869998931884766,"CompletedSolveTime":2.0,"ObjValue":0.3963299646065746,"Error":false,"TerminationStatus":"OPTIMAL"}

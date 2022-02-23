@@ -1,0 +1,1 @@
+{"SolverName":"EAGO","ObjBound":0.9223643098417462,"SolveTime":0.0820000171661377,"PrimalStatus":"FEASIBLE_POINT","InstanceName":"50_softplus_2_1_3","SolveTimeRaw":0.08299994468688965,"CompletedSolveTime":0.0820000171661377,"ObjValue":0.9224964731416709,"Error":false,"TerminationStatus":"OPTIMAL"}

@@ -1,0 +1,1 @@
+{"SolverName":"BARON","ObjBound":null,"SolveTime":900.0,"PrimalStatus":"NO_SOLUTION","InstanceName":"38_gelu_5_3_2","SolveTimeRaw":0.005000114440917969,"CompletedSolveTime":100.0,"ObjValue":null,"Error":false,"TerminationStatus":"OPTIMIZE_NOT_CALLED"}

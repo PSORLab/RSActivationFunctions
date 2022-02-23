@@ -1,0 +1,1 @@
+{"SolverName":"BARON","ObjBound":0.309182195845,"SolveTime":6.06,"PrimalStatus":"FEASIBLE_POINT","InstanceName":"100_silu_3_4_2","SolveTimeRaw":7.181999921798706,"CompletedSolveTime":100.0,"ObjValue":0.3092821958449221,"Error":false,"TerminationStatus":"LOCALLY_SOLVED"}

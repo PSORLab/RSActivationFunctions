@@ -1,0 +1,1 @@
+{"SolverName":"BARON","ObjBound":1.29282582154,"SolveTime":0.39,"PrimalStatus":"FEASIBLE_POINT","InstanceName":"52_sigmoid_5_1_5","SolveTimeRaw":2.5290000438690186,"CompletedSolveTime":100.0,"ObjValue":1.292955104123995,"Error":false,"TerminationStatus":"LOCALLY_SOLVED"}
