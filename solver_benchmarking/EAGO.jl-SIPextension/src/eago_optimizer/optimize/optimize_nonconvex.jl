@@ -41,12 +41,11 @@ function load_relaxed_problem!(m::GlobalOptimizer{R,S,Q}) where {R,S,Q<:Extensio
     full_var_num = _variable_num(FullVar(), m)
     relaxed_index_new = length(m._relaxed_variable_index) != full_var_num
     for i = 1:full_var_num
-        relaxed_variable_indx = MOI.add_variable(d)
-        v = SV(relaxed_variable_indx)
+        v = MOI.add_variable(d)
         if relaxed_index_new
-            push!(m._relaxed_variable_index, relaxed_variable_indx)
+            push!(m._relaxed_variable_index, v)
         else
-            m._relaxed_variable_index[i] = relaxed_variable_indx
+            m._relaxed_variable_index[i] = v
         end
 
         is_branch_variable =  m._branch_variables[i]
@@ -66,11 +65,27 @@ function load_relaxed_problem!(m::GlobalOptimizer{R,S,Q}) where {R,S,Q<:Extensio
         end
     end
 
+    # TODO: Remove when upstream Cbc issue https://github.com/jump-dev/Cbc.jl/issues/168 is fixed
+    # Add extra binary variable `issue_var` fixed to zero to prevent Cbc from displaying even though 
+    # silent is set to off. Sets `issue_var` to zero. 
+    issue_var = MOI.add_variable(d)
+    MOI.add_constraint(d, issue_var, ZO())
+    MOI.add_constraint(d, issue_var, ET(0.0))
+
+
     # set number of variables to branch on
     m._branch_variable_count = branch_variable_count
 
     # add linear constraints
-    add_linear_constraints!(m, d)
+    for (f, s) in collect(values(m._input_problem._linear_leq_constraints))
+        MOI.add_constraint(d, f, s)
+    end
+    for (f, s) in collect(values(m._input_problem._linear_geq_constraints))
+        MOI.add_constraint(d, f, s)
+    end
+    for (f, s) in collect(values(m._input_problem._linear_eq_constraints))
+        MOI.add_constraint(d, f, s)
+    end
 
     # sets relaxed problem objective sense to Min as all problems
     # are internally converted in Min problems in EAGO
@@ -124,8 +139,6 @@ function presolve_global!(t::ExtensionType, m::GlobalOptimizer)
     wp._relaxed_evaluator.subgrad_tighten = m._parameters.subgrad_tighten
     wp._relaxed_evaluator.reverse_subgrad_tighten =  m._parameters.reverse_subgrad_tighten
 
-    #@show wp._relaxed_evaluator.variable_values
-
     m._presolve_time = time() - m._parse_time
     return
 end
@@ -152,14 +165,13 @@ function termination_check(t::ExtensionType, m::GlobalOptimizer)
         m._end_state = GS_ITERATION_LIMIT
     elseif !relative_tolerance(L, U, m._parameters.relative_tolerance)
         m._end_state = GS_RELATIVE_TOL
-    elseif (U - L) < m._parameters.absolute_tolerance
+    elseif abs(U - L) < m._parameters.absolute_tolerance
         m._end_state = GS_ABSOLUTE_TOL
     elseif m._run_time > m._parameters.time_limit
         m._end_state = GS_TIME_LIMIT
     else
         return false
     end
-    println("Termination state is $(m._end_state)")
     return true
 end
 termination_check(m::GlobalOptimizer{R,S,Q}) where {R,S,Q<:ExtensionType} = termination_check(_ext_typ(m), m)
@@ -181,7 +193,7 @@ end
 
 const GLOBALEND_PSTATUS = Dict{GlobalEndState, MOI.ResultStatusCode}(
         GS_OPTIMAL => MOI.FEASIBLE_POINT,
-        GS_INFEASIBLE => MOI.INFEASIBILITY_CERTIFICATE,
+        GS_INFEASIBLE => MOI.NO_SOLUTION,                 # Proof of infeasibility implies not solution found
         GS_NODE_LIMIT => MOI.UNKNOWN_RESULT_STATUS,
         GS_ITERATION_LIMIT => MOI.UNKNOWN_RESULT_STATUS,
         GS_RELATIVE_TOL => MOI.FEASIBLE_POINT,
@@ -208,7 +220,6 @@ function convergence_check(t::ExtensionType, m::GlobalOptimizer)
     if (U < Inf) && (L > Inf)
         t |= (abs(U - L)/(max(abs(L), abs(U))) <= m._parameters.relative_tolerance)
     end
-    #t && @show "converged"
     if t && m._min_converged_value < Inf
          m._min_converged_value = min(m._min_converged_value, L)
     else
@@ -233,7 +244,6 @@ function store_candidate_solution!(m::GlobalOptimizer)
         m._first_solution_node = m._maximum_node_id
         m._global_upper_bound = m._upper_objective_value
         @__dot__ m._continuous_solution = m._upper_solution
-        copy!(m._constraint_primal, m._input_problem._constraint_primal)
     end
     return
 end
@@ -275,15 +285,11 @@ function global_solve!(m::GlobalOptimizer)
         # Performs prepocessing and times
         m._last_preprocess_time += @elapsed preprocess!(m)
 
-        #@show m._preprocess_feasibility
-
         if m._preprocess_feasibility
 
             # solves & times lower bounding problem
             m._last_lower_problem_time += @elapsed lower_problem!(m)
             print_results!(m, true)
-            #@show m._lower_feasibility
-           # @show convergence_check(m)
 
             # checks for infeasibility stores solution
             if m._lower_feasibility && !convergence_check(m)
@@ -334,7 +340,7 @@ function unpack_global_solution!(m::Optimizer{R,S,Q}) where {R,S,Q<:ExtensionTyp
     # TODO
     
     # stores objective value and bound 
-    if g._input_problem._optimization_sense == MOI.MIN_SENSE
+    if _is_input_min(g)
         m._objective_bound = g._global_lower_bound
         m._objective_value = g._global_upper_bound
     else

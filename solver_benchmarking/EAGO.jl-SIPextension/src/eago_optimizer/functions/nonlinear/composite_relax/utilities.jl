@@ -1,3 +1,27 @@
+
+function affine_expand_del(dx::Vector{Float64}, fx0::Float64, ∇fx0::SVector{N,Float64}, s::Vector{Int}) where N
+    #@show "ran aff expansion del"
+    v = fx0
+    #@show v
+    for i=1:N
+        #@show i, ∇fx0[i], dx[s[i]]
+        #v += ∇fx0[i]*dx[s[i]]
+        v += ∇fx0[i]*dx[i]
+       #@show v
+    end
+    return v
+end
+function affine_expand_del(dx::Vector{Interval{Float64}}, fx0::Float64, ∇fx0::SVector{N,Float64}, s::Vector{Int}) where N
+    v = fx0
+    for i = 1:N
+        t = ∇fx0[i]
+        #tdx = dx[s[i]]
+        tdx = dx[i]
+        v += t > 0.0 ? t*tdx.hi : t*tdx.lo
+    end
+    return v
+end
+
 function affine_expand(x::Vector{Float64}, x0::Vector{Float64}, fx0::Float64, ∇fx0::SVector{N,Float64}) where N
     v = fx0
     for i=1:N
@@ -123,7 +147,7 @@ Intersects the new set valued operator with the prior and performs affine bound 
   `interval_intersect` flag should be `true` as predetermined interval bounds are valid but
    the prior values may correspond to different points of evaluation.
 """
-function _cut(x::MC{N,T}, z::MC{N,T}, v::VariableValues, ϵ::Float64, s::Vector{Int}, cflag::Bool, pflag::Bool) where {N,T<:RelaxTag}
+function cut(x::MC{N,T}, z::MC{N,T}, v::VariableValues, ϵ::Float64, s::Vector{Int}, cflag::Bool, pflag::Bool) where {N,T<:RelaxTag}
     (pflag & cflag)  && (return set_value_post(x ∩ z.Intv, v, s, ϵ))
     (pflag & !cflag) && (return set_value_post(x, v, s, ϵ))
     (pflag & cflag)  && (return x ∩ z.Intv)

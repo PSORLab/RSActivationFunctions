@@ -76,11 +76,12 @@ function _select_branch_variable_cost(m::GlobalOptimizer)
     return map_argmax(i -> score(m.branch_cost, i), 1:_variable_num(BranchVar(),m))
 end
 
+# In the case of diam(X) = Inf variables rel_diam may equal NaN, this should be set to
+# a zero relative diameter to prevent "branching" on these variables for a functionally infinite
+# amount of time 
 function rel_diam(m::GlobalOptimizer, i::Int)
-    current_diam = _diam(BranchVar(), m, i)
-    full_var_index = _bvi(m, i)
-    starting_diam =  diam(_working_variable_info(m, full_var_index))
-    return current_diam/starting_diam
+    rd = _diam(BranchVar(), m, i)/diam(_working_variable_info(m, _bvi(m, i)))
+    return isnan(rd) ? 0.0 : rd
 end
 function _select_branch_variable_width(m::GlobalOptimizer)
     map_argmax(i -> rel_diam(m,i), 1:_variable_num(BranchVar(), m))
@@ -154,10 +155,11 @@ function branch_node!(t::ExtensionType, m::GlobalOptimizer)
     l_idepth = (flag && l_cont) ? n.depth + 1 : n.cont_depth
     u_idepth = (flag && u_cont) ? n.depth + 1 : n.cont_depth
 
-    push!(m._stack, NodeBB(l_lbd, l_ubd, l_int, l_cont, l_bound, u_bound,
-                           n.depth + 1, l_idepth, n.id + 1, BD_NEG, k, l_ext))
-    push!(m._stack, NodeBB(u_lbd, u_ubd, u_int, u_cont, l_bound, u_bound,
-                           n.depth + 1, u_idepth, n.id + 2, BD_POS, k, u_ext))
+    n1 = NodeBB(l_lbd, l_ubd, l_int, l_cont, l_bound, u_bound, n.depth + 1, l_idepth, n.id + 1, BD_NEG, k, l_ext)
+    n2 = NodeBB(u_lbd, u_ubd, u_int, u_cont, l_bound, u_bound, n.depth + 1, u_idepth, n.id + 2, BD_POS, k, u_ext)
+    push!(m._stack, n1)
+    push!(m._stack, n2)
+
     m._node_repetitions = 1
     m._maximum_node_id += 2
     m._node_count += 2
@@ -176,8 +178,8 @@ function single_storage!(t::ExtensionType, m::GlobalOptimizer)
     m._node_count += 1
     lower_bound = max(y.lower_bound, m._lower_objective_value)
     upper_bound = min(y.upper_bound, m._upper_objective_value)
-    push!(m._stack, NodeBB(y.lower_variable_bounds, y.upper_variable_bounds,
-                           lower_bound, upper_bound, y.depth, y.id))
+    push!(m._stack, NodeBB(y.lower_variable_bounds, y.upper_variable_bounds, y.is_integer, y.continuous,
+                           lower_bound, upper_bound, y.depth, y.cont_depth, y.id, y.branch_direction, y.last_branch, y.branch_extent))
     return
 end
 single_storage!(m::GlobalOptimizer{R,S,Q}) where {R,S,Q<:ExtensionType} = single_storage!(_ext_typ(m), m)

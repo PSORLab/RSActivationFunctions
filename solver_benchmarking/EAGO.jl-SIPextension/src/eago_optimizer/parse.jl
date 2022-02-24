@@ -11,34 +11,76 @@
 #############################################################################
 
 """
+    add_objective!
 
 Adds objective function (if any) to the parsed problem.
 """
 add_objective!(m::ParsedProblem, f) = nothing
-add_objective!(m::ParsedProblem, f::SV) = (m._objective = f; return )
-function add_objective!(m::ParsedProblem, f::SAF)
-    m._objective = AffineFunctionIneq(f, LT_ZERO)
-    return
-end
-function add_objective!(m::ParsedProblem, f::SQF)
-    m._objective = BufferedQuadraticIneq(f, LT_ZERO)
-end
+add_objective!(m::ParsedProblem, f::VI) = (m._objective = f; nothing)
+add_objective!(m::ParsedProblem, f::SAF) = (m._objective = AffineFunctionIneq(f, LT_ZERO); nothing)
+add_objective!(m::ParsedProblem, f::SQF) = (m._objective = BufferedQuadraticIneq(f, LT_ZERO); nothing)
 
 """
+    add_nonlinear_evaluator!
 
-Adds a Evaluator structure if nonlinear terms are attached.
+    Adds a Evaluator structure if nonlinear terms are attached.
 """
 add_nonlinear_evaluator!(m::GlobalOptimizer, evaluator::Nothing) = nothing
 function add_nonlinear_evaluator!(m::GlobalOptimizer, d::JuMP.NLPEvaluator)
     m._working_problem._relaxed_evaluator = Evaluator()
     relax_eval = m._working_problem._relaxed_evaluator
-    relax_eval.user_operators = OperatorRegistry(d.m.nlp_data.user_operators)
+    relax_eval.user_operators = OperatorRegistry(d.model.nlp_data.user_operators)
     relax_eval.subgrad_tol    = m._parameters.subgrad_tol
     m._nonlinear_evaluator_created = true
     return
 end
 add_nonlinear_evaluator!(m::GlobalOptimizer, nldata) = add_nonlinear_evaluator!(m, nldata.evaluator)
 add_nonlinear_evaluator!(m::GlobalOptimizer) = add_nonlinear_evaluator!(m, m._input_problem._nlp_data)
+
+
+function link_subexpression_dicts!(m::GlobalOptimizer)
+    evaluator = m._working_problem._relaxed_evaluator
+    n_subexpr = length(evaluator.subexpressions)
+
+    dn = Dict{Int,Float64}()
+    din = Dict{Int,Bool}()
+    for i = 1:n_subexpr
+        dn[i] = 0.0
+        din[i] = false
+    end
+    for ex in evaluator.subexpressions
+        mctyp = mc_type(ex)
+        ds = Dict{Int,mctyp}()
+        di = Dict{Int,mctyp}()
+        for i = 1:n_subexpr
+            ds[i] = zero(mctyp)
+            di[i] = zero(mctyp)
+        end
+        copy_subexpr!(ex.relax_cache, ds, dn, din, di)
+    end
+    if m._working_problem._objective isa BufferedNonlinearFunction
+        ex = m._working_problem._objective.ex
+        mctyp = mc_type(ex)
+        ds = Dict{Int,mctyp}()
+        di = Dict{Int,mctyp}()
+        for i = 1:n_subexpr
+            ds[i] = zero(mctyp)
+            di[i] = zero(mctyp)
+        end
+        copy_subexpr!(ex.relax_cache, ds, dn, din, di)
+    end
+    for f in m._working_problem._nonlinear_constr
+        mctyp = mc_type(f.ex)
+        ds = Dict{Int,mctyp}()
+        di = Dict{Int,mctyp}()
+        for i = 1:n_subexpr
+            ds[i] = zero(mctyp)
+            di[i] = zero(mctyp)
+        end
+        copy_subexpr!(f.ex.relax_cache, ds, dn, din, di)
+    end
+    return
+end
 
 """
 
@@ -50,8 +92,10 @@ function add_nonlinear!(m::GlobalOptimizer, evaluator::JuMP.NLPEvaluator)
     add_nonlinear_evaluator!(m, m._input_problem._nlp_data.evaluator)
 
     nlp_data = m._input_problem._nlp_data
+
     MOI.initialize(evaluator, Symbol[:Grad, :Jac, :ExprGraph])
-    user_operator_registry = OperatorRegistry(evaluator.m.nlp_data.user_operators)
+
+    user_operator_registry = OperatorRegistry(evaluator.model.nlp_data.user_operators)
 
     # set nlp data structure
     m._working_problem._nlp_data = nlp_data
@@ -87,12 +131,13 @@ function add_nonlinear!(m::GlobalOptimizer, evaluator::JuMP.NLPEvaluator)
     relax_evaluator = m._working_problem._relaxed_evaluator
     relax_evaluator.relax_type = renum
     dict_sparsity = Dict{Int,Vector{Int}}()
-    if length(evaluator.m.nlp_data.nlexpr) > 0      # should check for nonlinear objective, constraint
+    if length(evaluator.model.nlp_data.nlexpr) > 0      # should check for nonlinear objective, constraint
         for i = 1:length(evaluator.subexpressions)
             subexpr = evaluator.subexpressions[i]
-            nlexpr = NonlinearExpression!(rtype, subexpr, dict_sparsity, i, evaluator.subexpression_linearity, 
-                                          user_operator_registry, m._parameters.relax_tag, 
-                                          evaluator.m.nlp_data.nlparamvalues, ruse_apriori)
+            nlexpr = NonlinearExpression!(m._auxillary_variable_info, rtype, subexpr, MOI.NLPBoundsPair(-Inf, Inf),
+                                          dict_sparsity, i, evaluator.subexpression_linearity, 
+                                          user_operator_registry, evaluator.model.nlp_data.nlparamvalues,
+                                          m._parameters.relax_tag, ruse_apriori; is_sub = true)
             push!(relax_evaluator.subexpressions, nlexpr)
         end
     end
@@ -106,14 +151,11 @@ function add_nonlinear!(m::GlobalOptimizer, evaluator::JuMP.NLPEvaluator)
 
     # add nonlinear objective
     if evaluator.has_nlobj
-        #@show "ran has nonlinear"
-        #@show dict_sparsity
-        m._working_problem._objective = BufferedNonlinearFunction(rtype, evaluator.objective, MOI.NLPBoundsPair(-Inf, Inf),
+        m._working_problem._objective = BufferedNonlinearFunction(m._auxillary_variable_info, rtype, evaluator.objective, MOI.NLPBoundsPair(-Inf, Inf),
                                                                  dict_sparsity, evaluator.subexpression_linearity,
                                                                  user_operator_registry,
-                                                                 evaluator.m.nlp_data.nlparamvalues,
+                                                                 evaluator.model.nlp_data.nlparamvalues,
                                                                  m._parameters.relax_tag, ruse_apriori)
-        #@show typeof(m._working_problem._objective)
     end
 
     # add nonlinear constraints
@@ -121,10 +163,10 @@ function add_nonlinear!(m::GlobalOptimizer, evaluator::JuMP.NLPEvaluator)
     for i = 1:length(evaluator.constraints)
         constraint = evaluator.constraints[i]
         bnds = constraint_bounds[i]
-        push!(m._working_problem._nonlinear_constr, BufferedNonlinearFunction(rtype, constraint, bnds, dict_sparsity,
+        push!(m._working_problem._nonlinear_constr, BufferedNonlinearFunction(m._auxillary_variable_info, rtype, constraint, bnds, dict_sparsity,
                                                                               evaluator.subexpression_linearity,
                                                                               user_operator_registry,
-                                                                              evaluator.m.nlp_data.nlparamvalues,
+                                                                              evaluator.model.nlp_data.nlparamvalues,
                                                                               m._parameters.relax_tag, ruse_apriori))
     end
 
@@ -134,10 +176,10 @@ end
 add_nonlinear!(m::GlobalOptimizer, nldata) = add_nonlinear!(m, nldata.evaluator)
 add_nonlinear!(m::GlobalOptimizer) = add_nonlinear!(m, m._input_problem._nlp_data)
 
-function reform_epigraph_min!(m::GlobalOptimizer, d::ParsedProblem, f::SV)
+function reform_epigraph_min!(m::GlobalOptimizer, d::ParsedProblem, f::VI)
     flag = m._input_problem._optimization_sense == MOI.MAX_SENSE
     d._objective = AffineFunctionIneq(f, is_max = flag)
-    d._objective_saf = SAF([SAT(flag ? -1.0 : 1.0, VI(f.variable.value))], 0.0)
+    d._objective_saf = SAF([SAT(flag ? -1.0 : 1.0, VI(f.value))], 0.0)
     return
 end
 function reform_epigraph_min!(m::GlobalOptimizer, d::ParsedProblem, f::AffineFunctionIneq)
@@ -151,85 +193,75 @@ function reform_epigraph_min!(m::GlobalOptimizer, d::ParsedProblem, f::AffineFun
     return
 end
 
-function add_η!(m::ParsedProblem, l::Float64, u::Float64)
+function add_η!(m::ParsedProblem)
     m._variable_count += 1
-    push!(m._variable_info, VariableInfo(MOI.Interval{Float64}(l, u)))
-    #@show m._variable_info[end]
+    push!(m._variable_info, VariableInfo{Float64}())
     return m._variable_count
 end
 
+set_variable_values!(wp, v) = set_variable_values!(wp._relaxed_evaluator, v)
 reform_epigraph_min!(m::GlobalOptimizer, d::ParsedProblem, f::Nothing) = nothing
 function reform_epigraph_min!(m::GlobalOptimizer, d::ParsedProblem, f::BufferedQuadraticIneq)
     ip = m._input_problem
-    vi = d._variable_info
+    wp = m._working_problem
+
+    vi = wp._variable_info
+    q = _variable_num(FullVar(), m)
+    v = VariableValues{Float64}(x = mid.(vi), x0 = mid.(vi),
+                                lower_variable_bounds = lower_bound.(vi),
+                                upper_variable_bounds = upper_bound.(vi),
+                                node_to_variable_map = [i for i in 1:q],
+                                variable_to_node_map = [i for i in 1:q])
+    set_variable_values!(wp, v)
+    
     n = NodeBB(lower_bound.(vi), upper_bound.(vi), is_integer.(vi))
     m._current_node = n
+    set_node!(wp._relaxed_evaluator, n)
 
-    l, u = interval_bound(m, f)
-    if !_is_input_min(m)
-        l, u = -u, -l
+    ηi = add_η!(d)
+    if !isnothing(ip._nlp_data)
+        @variable(ip._nlp_data.evaluator.model, η)
+        @objective(ip._nlp_data.evaluator.model, Min, η)
     end
-    ηi = add_η!(d, l, u)
-    @variable(ip._nlp_data.evaluator.m, l <= η <= u)
-    sqf_obj = MOI.get(ip._nlp_data.evaluator.m, MOI.ObjectiveFunction{SQF}())
-    if ip._optimization_sense == MOI.MAX_SENSE
+
+    sqf_obj = copy(MOI.get(ip._nlp_data.evaluator.model, MOI.ObjectiveFunction{SQF}()))
+    if !_is_input_min(m)
         MOIU.operate!(-, Float64, sqf_obj)
     end
-    push!(sqf_obj.affine_terms, SAT(-1.0, VI(length(vi))))
-    MOI.add_constraint(backend(ip._nlp_data.evaluator.m), sqf_obj, LT(0.0))
-    @objective(ip._nlp_data.evaluator.m, Min, η)
-    m._global_lower_bound = l
-    m._global_upper_bound = u
-    d._objective_saf = SAF([SAT(1.0, VI(ηi))], 0.0)
+    d._objective_saf = SAF([SAT(1.0, VI(ηi))], 0.0)    
+    push!(sqf_obj.affine_terms, SAT(-1.0, VI(ηi)))
+    _constraints(ip, SQF, LT)[CI{SQF,LT}(ip._constraint_count += 1)] = (sqf_obj, LT(0.0))
+    push!(wp._sqf_leq, BufferedQuadraticIneq(sqf_obj, LT(0.0)))
 
     f.buffer[ηi] = 0.0
     f.len += 1
     if !_is_input_min(m)
         MOIU.operate!(-, Float64, f.func)
     end
-    MOIU.operate!(-, Float64, f.func, SV(VI(ηi)))
-    push!(f.saf.terms, SAT(0.0, VI(ηi)))
+    MOIU.operate!(-, Float64, f.func, VI(ηi))
+    push!(f.saf.terms, SAT(-1.0, VI(ηi)))
+    #push!(wp._sqf_leq, deepcopy(f))
+    @show length(wp._sqf_leq)
     m._obj_var_slack_added = true
-
     return
 end
 function reform_epigraph_min!(m::GlobalOptimizer, d::ParsedProblem, f::BufferedNonlinearFunction)
     ip = m._input_problem
     wp = m._working_problem
 
-    vi = ip._variable_info
-    vi_mid = mid.(vi)
-    vi_lo = lower_bound.(vi)
-    vi_hi = upper_bound.(vi)
-
+    vi = wp._variable_info
     q = _variable_num(FullVar(), m)
-    v = VariableValues{Float64}(x = vi_mid,
-                                lower_variable_bounds = vi_lo,
-                                upper_variable_bounds = vi_hi,
+    v = VariableValues{Float64}(x = mid.(vi), x0 = mid.(vi),
+                                lower_variable_bounds = lower_bound.(vi),
+                                upper_variable_bounds = upper_bound.(vi),
                                 node_to_variable_map = [i for i in 1:q],
-                                variable_to_node_map = [i for i in 1:q])
-    #println(" epigraph YYY")
-    #@show v
-    wp._relaxed_evaluator.variable_values = v
-    _set_variable_storage!(f, v)
-
-    n = NodeBB(vi_lo, vi_hi, is_integer.(vi))
-    m._current_node = n
-    set_node!(wp._relaxed_evaluator, n)
-    l, u = interval_bound(m, f)
-    if !_is_input_min(m)
-        l, u = -u, -l
-    end
-    d._objective.ex.lower_bound = l
-    d._objective.ex.upper_bound = u
-    #@show typeof(d._objective.ex)
-    ηi = add_η!(d, l, u)
-    @variable(ip._nlp_data.evaluator.m, l <= η <= u)
-    m._global_lower_bound = l
-    m._global_upper_bound = u
+                                variable_to_node_map = [i for i in 1:q]) 
+   
+    ηi = add_η!(d)
+    @variable(ip._nlp_data.evaluator.model, η)
     wp._objective_saf = SAF([SAT(1.0, VI(ηi))], 0.0)
 
-    nd = ip._nlp_data.evaluator.m.nlp_data.nlobj.nd
+    nd = ip._nlp_data.evaluator.model.nlp_data.nlobj.nd
     if !_is_input_min(m)
         pushfirst!(nd, NodeData(JuMP._Derivatives.CALLUNIVAR, 2, 1))
         pushfirst!(nd, NodeData(JuMP._Derivatives.CALL, 2, -1))
@@ -245,13 +277,13 @@ function reform_epigraph_min!(m::GlobalOptimizer, d::ParsedProblem, f::BufferedN
         end
     end
     push!(nd, NodeData(JuMP._Derivatives.VARIABLE, ηi, 1))
-    nlobj = ip._nlp_data.evaluator.m.nlp_data.nlobj
+    nlobj = ip._nlp_data.evaluator.model.nlp_data.nlobj
     nlexpr = JuMP._NonlinearExprData(copy(nlobj.nd), copy(nlobj.const_values))
     nlcons = JuMP._NonlinearConstraint(nlexpr, -Inf, 0.0)
 
-    ip._nlp_data.evaluator.m.nlp_data.nlobj = nothing
+    ip._nlp_data.evaluator.model.nlp_data.nlobj = nothing
     ip._nlp_data.evaluator.has_nlobj = false
-    push!(ip._nlp_data.evaluator.m.nlp_data.nlconstr, nlcons)
+    push!(ip._nlp_data.evaluator.model.nlp_data.nlconstr, nlcons)
     constraint_bounds = ip._nlp_data.constraint_bounds
     push!(constraint_bounds, MOI.NLPBoundsPair(-Inf, 0.0))
     ip._nlp_data = MOI.NLPBlockData(constraint_bounds, ip._nlp_data.evaluator, false)
@@ -286,9 +318,7 @@ $(TYPEDSIGNATURES)
 Detects any variables set to a fixed value by equality or inequality constraints
 and populates the `_fixed_variable` storage array.
 """
-function label_fixed_variables!(m::GlobalOptimizer)
-    map!(x -> check_set_is_fixed(x), m._fixed_variable, m._working_problem._variable_info)
-end
+label_fixed_variables!(m::GlobalOptimizer) = map!(x -> check_set_is_fixed(x), m._fixed_variable, m._working_problem._variable_info)
 
 """
 $(TYPEDSIGNATURES)
@@ -305,23 +335,23 @@ function label_branch_variables!(m::GlobalOptimizer)
     else
         m._branch_variables = fill(false, m._working_problem._variable_count)
         for f in wp._sqf_leq, t in f.func.quadratic_terms
-            m._branch_variables[t.variable_index_1.value] = true
-            m._branch_variables[t.variable_index_2.value] = true
+            m._branch_variables[t.variable_1.value] = true
+            m._branch_variables[t.variable_2.value] = true
         end
         for f in wp._sqf_eq, t in f.func.quadratic_terms
-            m._branch_variables[t.variable_index_1.value] = true
-            m._branch_variables[t.variable_index_2.value] = true
+            m._branch_variables[t.variable_1.value] = true
+            m._branch_variables[t.variable_2.value] = true
         end
-        for f in wp._nonlinear_constr, i in _sparsity(f)
-            m._branch_variables[i] = true
+        for f in wp._nonlinear_constr, i in sparsity(f)
+             m._branch_variables[i] = true
         end
         if wp._objective isa BufferedQuadraticIneq
             for t in wp._objective.func.quadratic_terms
-                m._branch_variables[t.variable_index_1.value] = true
-                m._branch_variables[t.variable_index_2.value] = true
+                m._branch_variables[t.variable_1.value] = true
+                m._branch_variables[t.variable_2.value] = true
             end
         elseif wp._objective isa BufferedNonlinearFunction
-            for i in _sparsity(wp._objective)
+            for i in sparsity(wp._objective)
                 m._branch_variables[i] = true
             end
         end
@@ -333,6 +363,8 @@ function label_branch_variables!(m::GlobalOptimizer)
             m._branch_variables[i] = false
         elseif m._branch_variables[i] || wp._variable_info[i].is_integer 
             push!(m._branch_to_sol_map, i)
+        elseif i == wp._variable_count
+            m._branch_variables[i] = false
         end
     end
 
@@ -349,16 +381,25 @@ function label_branch_variables!(m::GlobalOptimizer)
     l = lower_bound.(m._working_problem._variable_info)
     u = upper_bound.(m._working_problem._variable_info)
     v = VariableValues{Float64}(x = zeros(vnum),
+                                x0 = zeros(vnum),
                                 lower_variable_bounds = l,
                                 upper_variable_bounds = u,
                                 node_to_variable_map = m._branch_to_sol_map,
                                 variable_to_node_map = m._sol_to_branch_map)
-    #println(" label branch XXX ")
-    #@show v
+
     wp._relaxed_evaluator.variable_values = v
-    (wp._objective isa BufferedNonlinearFunction) && _set_variable_storage!(wp._objective, v)
-    foreach(i -> _set_variable_storage!(i, v), wp._nonlinear_constr)
-    foreach(i -> _set_variable_storage!(i, v), wp._relaxed_evaluator.subexpressions)
+    (wp._objective isa BufferedNonlinearFunction) && set_variable_storage!(wp._objective, v)
+    foreach(i -> set_variable_storage!(i, v), wp._nonlinear_constr)
+    foreach(i -> set_variable_storage!(i, v), wp._relaxed_evaluator.subexpressions)
+    return
+end
+
+
+function variable_load_parse!(m::Optimizer, ::Type{VI}, ::Type{T}) where T
+    wp = m._global_optimizer._working_problem = m._working_problem
+    for (i, v) in enumerate(values(_constraints(m, VI, T)))
+        wp._variable_info[v[1].value] = VariableInfo(wp._variable_info[v[1].value], v[2])
+    end
     return
 end
 
@@ -370,24 +411,41 @@ function initial_parse!(m::Optimizer{R,S,T}) where {R,S,T}
     # reset initial time and solution statistics
     m._global_optimizer._time_left = m._parameters.time_limit
 
-    # add variables to working model
     ip = m._global_optimizer._input_problem = m._input_problem
     wp = m._global_optimizer._working_problem = m._working_problem
     m._global_optimizer._parameters = m._parameters
-    append!(wp._variable_info, ip._variable_info)
+
+    # add variables to working model
+    wp._variable_info = VariableInfo{Float64}[VariableInfo{Float64}() for i=1:ip._variable_count]
+    variable_load_parse!(m, VI, LT)
+    variable_load_parse!(m, VI, GT)
+    variable_load_parse!(m, VI, ET)
+    variable_load_parse!(m, VI, ZO)
+    variable_load_parse!(m, VI, MOI.Integer)
     wp._variable_count = ip._variable_count
 
-    # add linear constraints to the working problem
-    append!(wp._saf_leq, [AffineFunctionIneq(c[1], c[2]) for c in ip._linear_leq_constraints])
-    append!(wp._saf_leq, [AffineFunctionIneq(c[1], c[2]) for c in ip._linear_geq_constraints])
-    wp._saf_eq  = [AffineFunctionEq(c[1], c[2]) for c in ip._linear_eq_constraints]
+    for (f, s) in values(ip._linear_leq_constraints)
+        push!(wp._saf_leq, AffineFunctionIneq(f, s))
+    end
+    for (f, s) in values(ip._linear_geq_constraints)
+        push!(wp._saf_leq, AffineFunctionIneq(f, s))
+    end
+    for (f, s) in values(ip._linear_eq_constraints)
+        push!(wp._saf_eq, AffineFunctionEq(f, s))
+    end
 
-    append!(wp._sqf_leq, [BufferedQuadraticIneq(c[1], c[2]) for c in ip._quadratic_leq_constraints])
-    append!(wp._sqf_leq, [BufferedQuadraticIneq(c[1], c[2]) for c in ip._quadratic_geq_constraints])
-    wp._sqf_eq  = [BufferedQuadraticEq(c[1], c[2]) for c in ip._quadratic_eq_constraints]
+    for (f, s) in values(ip._quadratic_leq_constraints)
+        push!(wp._sqf_leq, BufferedQuadraticIneq(f, s))
+    end
+    for (f, s) in values(ip._quadratic_geq_constraints)
+        push!(wp._sqf_leq, BufferedQuadraticIneq(f, s))
+    end
+    for (f, s) in values(ip._quadratic_eq_constraints)
+        push!(wp._sqf_eq, BufferedQuadraticEq(f, s))
+    end
 
     add_objective!(wp, ip._objective)    # set objective function
-    add_nonlinear!(m._global_optimizer)         # add nonlinear constraints, evaluator, subexpressions
+    add_nonlinear!(m._global_optimizer)  # add nonlinear constraints, evaluator, subexpressions
 
     # converts a maximum problem to a minimum problem (internally) if necessary
     # this is placed after adding nonlinear functions as this prior routine
@@ -395,6 +453,8 @@ function initial_parse!(m::Optimizer{R,S,T}) where {R,S,T}
     reform_epigraph_min!(m._global_optimizer)
     label_fixed_variables!(m._global_optimizer)
     label_branch_variables!(m._global_optimizer)
+
+    link_subexpression_dicts!(m._global_optimizer)
 
     # updates run and parse times
     new_time = time() - m._global_optimizer._start_time
@@ -411,14 +471,14 @@ function parse_classify_problem!(m::GlobalOptimizer)
     ip = m._input_problem
 
     nl_expr_num = 0
-    if (ip._objective === nothing) && (ip._nlp_data !== nothing)
+    if isnothing(ip._objective) && !isnothing(ip._nlp_data)
         if ip._nlp_data.has_objective
             nl_expr_num += 1
             has_objective = true
         else
             has_objective = false
         end
-    elseif (ip._objective === nothing) && (ip._nlp_data === nothing)
+    elseif isnothing(ip._objective) && isnothing(ip._nlp_data)
         has_objective = false
     end
     nl_expr_num += length(m._working_problem._nonlinear_constr)
@@ -427,15 +487,19 @@ function parse_classify_problem!(m::GlobalOptimizer)
                       length(ip._quadratic_geq_constraints) +
                       length(ip._quadratic_eq_constraints)
 
-    if (ip._objective !== nothing)
+    if !isnothing(ip._objective)
         has_objective = true
     end
-    lin_or_sv_obj = (ip._objective isa SV || ip._objective isa SAF || !has_objective)
+    has_int_var = !iszero(length(ip._vi_zo_constraints) + length(ip._vi_int_constraints))
+
+    lin_or_sv_obj = (ip._objective isa VI || ip._objective isa SAF || !has_objective)
     relaxed_supports_soc = false
 
-    if (cone_constr_num == 0) && (quad_constr_num == 0) && (nl_expr_num == 0) && lin_or_sv_obj
+    if (cone_constr_num == 0) && (quad_constr_num == 0) && (nl_expr_num == 0) && lin_or_sv_obj && !has_int_var
         m._working_problem._problem_type = LP()
-    elseif (quad_constr_num == 0) && relaxed_supports_soc && (nl_expr_num == 0) && lin_or_sv_obj
+    elseif (cone_constr_num == 0) && (quad_constr_num == 0) && (nl_expr_num == 0) && lin_or_sv_obj
+        m._working_problem._problem_type = MILP()
+    elseif (quad_constr_num == 0) && relaxed_supports_soc && (nl_expr_num == 0) && lin_or_sv_obj && !has_int_var
         m._working_problem._problem_type = SOCP()
     else
         m._working_problem._problem_type = MINCVX()

@@ -16,48 +16,33 @@ function add_variables(m::GlobalOptimizer, d)
     z = fill(VI(1), n)
     for i = 1:n
         z[i] = MOI.add_variable(d)
-        sv = SV(z[i])
         vi = m._working_problem._variable_info[i]
         if is_fixed(vi)
-            MOI.add_constraint(d, sv, ET(vi))
+            MOI.add_constraint(d, z[i], ET(vi))
         elseif is_interval(vi)
-            MOI.add_constraint(d, sv, IT(vi))
+            MOI.add_constraint(d, z[i], IT(vi))
         elseif is_greater_than(vi)
-            MOI.add_constraint(d, sv, GT(vi))
+            MOI.add_constraint(d, z[i], GT(vi))
         elseif is_less_than(vi)
-            MOI.add_constraint(d, sv, LT(vi))
+            MOI.add_constraint(d, z[i], LT(vi))
         end
         if is_integer(vi)
-            MOI.add_constraint(d, sv, MOI.Integer())
+            MOI.add_constraint(d, z[i], MOI.Integer())
         end
     end
     return z
 end
 
-### LP and MILP routines
-function add_linear_constraints!(m::GlobalOptimizer, d::T) where T
-    ip = m._input_problem
-    for (f, leq, i) in ip._linear_leq_constraints
-        ip._linear_leq_ci_dict[i] = MOI.add_constraint(d, f, leq)
-    end
-    for (f, geq, i) in ip._linear_geq_constraints
-        ip._linear_geq_ci_dict[i] = MOI.add_constraint(d, f, geq)
-    end
-    for (f, eq, i) in ip._linear_eq_constraints
-        ip._linear_eq_ci_dict[i] = MOI.add_constraint(d, f, eq)
-    end
-    return
-end
-
 lp_obj!(m::GlobalOptimizer, d, f::Nothing) = false
-function lp_obj!(m::GlobalOptimizer, d, f::SV)
-    MOI.set(d, MOI.ObjectiveFunction{SV}(), f)
+function lp_obj!(m::GlobalOptimizer, d, f::VI)
+    MOI.set(d, MOI.ObjectiveFunction{VI}(), f)
     MOI.set(d, MOI.ObjectiveSense(), m._input_problem._optimization_sense)
     return false
 end
 function lp_obj!(m::GlobalOptimizer, d, f::SAF)
     MOI.set(d, MOI.ObjectiveFunction{SAF}(), f)
     MOI.set(d, MOI.ObjectiveSense(), MOI.MIN_SENSE)
+    #MOI.set(d, MOI.ObjectiveSense(), m._input_problem._optimization_sense)
     return m._input_problem._optimization_sense == MOI.MAX_SENSE
 end
 
@@ -69,10 +54,21 @@ function optimize!(::LP, m::Optimizer{Q,S,T}) where {Q,S,T}
     MOI.empty!(r)
 
     d._relaxed_variable_index = add_variables(d, r)
-    add_linear_constraints!(d, r)
+    
+    # TODO: Remove when upstream Cbc issue https://github.com/jump-dev/Cbc.jl/issues/168 is fixed
+    # Add extra binary variable `issue_var` fixed to zero to prevent Cbc from displaying even though 
+    # silent is set to off. Sets `issue_var` to zero. 
+    issue_var = MOI.add_variable(d)
+    MOI.add_constraint(d, issue_var, ZO())
+    MOI.add_constraint(d, issue_var, ET(0.0))
+
+    _add_constraint_store_ci_linear!(r, ip)
+
+    #@show tip._objective
+    @show ip._optimization_sense
     min_to_max = lp_obj!(d, r, ip._objective)
     if ip._optimization_sense == MOI.FEASIBILITY_SENSE
-        MOI.set(r, MOI.ObjectiveSense(), MOI.FEASIBILITY_SENSE)
+        MOI.set(r, MOI.ObjectiveSense(), ip._optimization_sense)
     end
 
     (d._parameters.verbosity < 5) && MOI.set(r, MOI.Silent(), true)
@@ -101,18 +97,10 @@ function optimize!(::LP, m::Optimizer{Q,S,T}) where {Q,S,T}
             d._continuous_solution[i] = MOI.get(r, MOI.VariablePrimal(),  d._relaxed_variable_index[i])
         end
 
-        for (i, ci_saf_leq) in ip._linear_leq_ci_dict
-            d._constraint_primal[i] = MOI.get(r, MOI.ConstraintPrimal(), ci_saf_leq)
-        end
-        for (i, ci_saf_geq) in ip._linear_geq_ci_dict
-            d._constraint_primal[i] = MOI.get(r, MOI.ConstraintPrimal(), ci_saf_geq)
-        end
-        for (i, ci_saf_eq) in ip._linear_eq_ci_dict
-            d._constraint_primal[i] = MOI.get(r, MOI.ConstraintPrimal(), ci_saf_eq)
-        end
+        _extract_primal_linear!(r, ip)
     end
     d._run_time = time() - d._start_time
     return
 end
 
-optimize!(::MILP, m::GlobalOptimizer) = optimize!(LP(), m)
+optimize!(::MILP, m::Optimizer{Q,S,T}) where {Q,S,T} = optimize!(LP(), m)

@@ -15,9 +15,11 @@ include("optimize_conic.jl")
 include("optimize_convex.jl")
 include("optimize_nonconvex.jl")
 
-throw_optimize_hook!(m::Optimizer{Q,S,T}) where {Q,S,T}  = optimize_hook!(_ext_type(m), m)
+function throw_optimize_hook!(m::Optimizer{Q,S,T}) where {Q,S,T} 
+    optimize_hook!(_ext_type(m.subsolver_block), m._global_optimizer)
+end
 
-function MOI.optimize!(m::Optimizer{Q,S,T}) where {Q,S,T} 
+function MOI.optimize!(m::Optimizer{Q,S,T}) where {Q,S,T}
 
     m._global_optimizer._start_time = time()
 

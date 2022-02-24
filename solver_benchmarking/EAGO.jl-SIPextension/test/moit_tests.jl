@@ -1,64 +1,13 @@
-
+#=
 const unit_excludes = String[
     "number_threads",                 # EAGO won't support number of threads in near future
     "raw_status_string",              # TODO: ADD internal status states to EAGO
     "solve_unbounded_model",          # CBC returns infeasible or unbounded for linear...
-
     "solve_zero_one_with_bounds_3",   # GLPK has a non-standard return code
     "solve_result_index",             # TODO: Should throw error when querying for multiple results... (expected behavior?)
-
     "solve_qcp_edge_cases",           # Not box constrained NLP type problems...
     "solve_qp_zero_offdiag",
     "solve_qp_edge_cases",
-
-    # Passing
-    #=
-    "solve_objbound_edge_cases",
-    "solve_integer_edge_cases",
-    "solve_zero_one_with_bounds_1",
-    "solve_zero_one_with_bounds_2",
-    "solve_duplicate_terms_vector_affine",
-    "solve_with_upperbound",
-    "solve_single_variable_dual_max",
-    "solve_single_variable_dual_min",
-    "solve_farkas_lessthan",
-    "solve_farkas_interval_upper",
-    "solve_farkas_greaterthan",
-    "solve_with_lowerbound",
-    "solve_twice",
-    "solve_farkas_variable_lessthan_max",
-    "solve_farkas_variable_lessthan",
-    "delete_soc_variables",
-    "solve_farkas_equalto_lower",
-    "solve_farkas_equalto_upper",
-    "delete_nonnegative_variables",
-    "solve_affine_greaterthan",
-    "solve_farkas_interval_lower",
-    "add_variable",
-    "solve_singlevariable_obj",
-    "solve_constant_obj",
-    "solver_name",
-    "delete_variable",
-    "solve_time",
-    "solve_duplicate_terms_obj",
-    "delete_variables",
-    "add_variables",
-    "feasibility_sense",
-    "solve_affine_equalto",
-    "max_sense",
-    "variablenames",
-    "silent",
-    "update_dimension_nonnegative_variables",
-    "solve_blank_obj",
-    "min_sense",
-    "solve_affine_interval",
-    "solve_duplicate_terms_scalar_affine",
-    "time_limit_sec",
-    "getvariable",
-    "getconstraint",
-    "get_objective_function",
-    "solve_affine_lessthan",
-    =#
     "solve_affine_deletion_edge_cases"   # TODO: Fix this
 ]
 
@@ -129,17 +78,17 @@ const contquadratic_excludes = String[
 function test_moi(T::Type{<:Real}; solver_options...)
 
     optimizer = MOIU.CachingOptimizer(MOIU.UniversalFallback(MOIU.Model{T}()), EAGO.Optimizer())
-    MOI.set(optimizer, MOI.RawParameter(:verbosity), 0)
+    MOI.set(optimizer, MOI.RawParameter("verbosity"), 0)
 
     tol = 2sqrt(sqrt(eps(T)))
-    config = MOIT.TestConfig{T}(
+    config = MOIT.Config(T;
     atol = tol,
     rtol = tol,
-    solve = true,
-    query = true,
-    modify_lhs = false,
-    duals = false,
-    infeas_certificates = false,
+    #solve = true,
+    #query = true,
+    #modify_lhs = false,
+    #duals = false,
+    #infeas_certificates = false,
     )
 
     @testset "unit tests" begin
@@ -168,3 +117,94 @@ end
 # Need to test with GLPK as well to ensure subsolver supports constraint
 # coefficient modification.
 test_moi(Float64)
+=#
+
+module TestEAGO
+
+import EAGO
+using MathOptInterface
+using Test
+
+const MOI = MathOptInterface
+const OPTIMIZER = MOI.instantiate(MOI.OptimizerWithAttributes(EAGO.Optimizer, MOI.Silent() => true))
+const BRIDGED = MOI.instantiate(MOI.OptimizerWithAttributes(EAGO.Optimizer, MOI.Silent() => true), with_bridge_type = Float64)
+const CONFIG = MOI.Test.Config(atol = 1e-3, rtol = 1e-3, optimal_status = MOI.OPTIMAL, 
+                               exclude = Any[MOI.DualObjectiveValue, MOI.ConstraintBasisStatus, MOI.VariableName, MOI.ConstraintName, MOI.delete,
+                                             MOI.ConstraintDual, MOI.ListOfModelAttributesSet, MOI.add_constrained_variables])
+
+"""
+    runtests()
+
+This function runs all functions in the this Module starting with `test_`.
+"""
+function runtests()
+    for name in names(@__MODULE__; all = true)
+        if startswith("$(name)", "test_")
+            @testset "$(name)" begin
+                getfield(@__MODULE__, name)()
+            end
+        end
+    end
+end
+
+"""
+    test_runtests()
+
+This function runs all the tests in MathOptInterface.Test.
+
+Pass arguments to `exclude` to skip tests for functionality that is not
+implemented or that your solver doesn't support.
+"""
+function test_runtests()
+    MOI.Test.runtests(BRIDGED, CONFIG, 
+                      exclude = [# IPOPT Inherited test exclusions
+                                "test_model_ScalarFunctionConstantNotZero",
+                                "test_solve_TerminationStatus_DUAL_INFEASIBLE",
+                                "test_linear_VectorAffineFunction_empty_row",
+                                "test_solve_DualStatus_INFEASIBILITY_CERTIFICATE_",
+                                "test_model_LowerBoundAlreadySet",
+                                "test_model_UpperBoundAlreadySet",
+                                "test_model_copy_to_UnsupportedAttribute",
+                                "test_model_copy_to_UnsupportedConstraint",
+                                "test_objective_set_via_modify",
+                                "test_model_ModelFilter_ListOfConstraintIndices",
+                                "test_model_ModelFilter_ListOfConstraintTypesPresent",
+                                # Cbc default test exlucisons
+                                "_Indicator_",
+                                "test_linear_SOS1_integration",
+                                "test_linear_SOS2_integration",
+                                "test_solve_SOS2_add_and_delete",
+                                "test_conic_NormInfinityCone_INFEASIBLE",
+                                "test_conic_NormOneCone_INFEASIBLE",
+                                "test_solve_TerminationStatus_DUAL_INFEASIBLE",
+
+                                # EAGO test exclusions
+                                "test_attribute_NumberOfThreads",
+                                "test_modification_",
+                                "test_linear_integration_delete_variables",
+
+                                "test_quadratic_SecondOrderCone_basic",
+                                
+                                "test_quadratic_constraint_GreaterThan",
+                                "test_quadratic_constraint_LessThan",
+                                "test_quadratic_constraint_basic",
+                                "test_quadratic_constraint_minimize",
+                                "test_quadratic_duplicate_terms",
+                                "test_quadratic_integration",
+                                "test_quadratic_nonconvex_constraint_integration",
+                                "test_quadratic_nonhomogeneous",
+
+                                "test_constraint_qcp_duplicate_diagonal",
+                                "test_constraint_qcp_duplicate_off_diagonal",
+                                "test_objective_get_ObjectiveFunction_ScalarAffineFunction",
+                                "test_objective_qp_ObjectiveFunction_edge_cases",
+                                "test_objective_qp_ObjectiveFunction_zero_ofdiag",
+                                ],
+                      exclude_tests_after = v"0.10.5")
+end
+
+end
+
+@testset "MOI" begin
+    TestEAGO.runtests()
+end            

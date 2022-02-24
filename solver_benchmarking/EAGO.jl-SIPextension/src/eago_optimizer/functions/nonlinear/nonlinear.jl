@@ -16,7 +16,7 @@ const DEBUG_NL = false
 
 include(joinpath(@__DIR__, "register_special.jl"))
 include(joinpath(@__DIR__, "graph", "graph.jl"))
-include(joinpath(@__DIR__, "constant", "constant.jl"))
+include(joinpath(@__DIR__, "interval", "interval.jl"))
 include(joinpath(@__DIR__, "composite_relax", "composite_relax.jl"))
 include(joinpath(@__DIR__, "apriori_relax", "apriori_relax.jl"))
 
@@ -45,18 +45,15 @@ function NonlinearExpression()
 end
 
 relax_info(s::Relax, n::Int, t::T) where T = MC{n,T}
-function NonlinearExpression!(rtype::S, sub::Union{JuMP._SubexpressionStorage,JuMP._FunctionStorage},
+function NonlinearExpression!(aux_info, rtype::S, sub::Union{JuMP._SubexpressionStorage,JuMP._FunctionStorage},
                               b::MOI.NLPBoundsPair, sub_sparsity::Dict{Int,Vector{Int}},
                               subexpr_indx::Int,
                               subexpr_linearity::Vector{JuMP._Derivatives.Linearity},
                               op::OperatorRegistry, parameter_values,
                               tag::T, use_apriori_flag::Bool; is_sub::Bool = false) where {S,T}
-    g = DirectedTree(sub, op, sub_sparsity, subexpr_linearity, parameter_values)
-    grad_sparsity = _sparsity(g, 1)
+    g = DirectedTree(aux_info, sub, op, sub_sparsity, subexpr_linearity, parameter_values, is_sub, subexpr_indx)
+    grad_sparsity = sparsity(g, 1)
     n = length(grad_sparsity)
-    if is_sub
-        sub_sparsity[subexpr_indx] = copy(grad_sparsity) # updates subexpression sparsity dictionary
-    end
     V = relax_info(rtype, n, tag)
     c = RelaxCache{V,n,T}()
     c.use_apriori_mul = use_apriori_flag
@@ -64,18 +61,25 @@ function NonlinearExpression!(rtype::S, sub::Union{JuMP._SubexpressionStorage,Ju
     return NonlinearExpression{V,n,T}(g, c, false, false, b.lower, b.upper, grad_sparsity)
 end
 
-@inline _has_value(d::NonlinearExpression) = d.has_value
-@inline _dep_subexpr_count(d::NonlinearExpression) = _dep_subexpr_count(d.g)
-@inline _set_has_value!(d::NonlinearExpression, v::Bool) = (d.has_value = v; return )
-@inline _set_last_reverse!(d::NonlinearExpression, v::Bool) = (d.last_reverse = v; return )
-@inline function _set_variable_storage!(d::NonlinearExpression, v::VariableValues{S}) where S<:Real
-    d.relax_cache.v = v
+@inline has_value(d::NonlinearExpression) = d.has_value
+@inline dep_subexpr_count(d::NonlinearExpression) = dep_subexpr_count(d.g)
+@inline set_has_value!(d::NonlinearExpression, v::Bool) = (d.has_value = v; return )
+function _set_last_reverse!(d::NonlinearExpression{V, N, T}, v::Bool) where {V,N,T<:RelaxTag}
+    d.last_reverse = v; 
     return
 end
-@inbounds _sparsity(d::NonlinearExpression) = _sparsity(d.g, 1)
-@inbounds _set(d::NonlinearExpression{V}) where V = _set(d.relax_cache, 1)
-@inbounds _num(d::NonlinearExpression{V}) where V = _num(d.relax_cache, 1)
-@inbounds _is_num(d::NonlinearExpression) = _is_num(d.relax_cache, 1)
+function set_variable_storage!(d::NonlinearExpression, v::VariableValues{S}) where S<:Real
+    d.relax_cache.ic.v = v
+    return
+end
+@inbounds sparsity(d::NonlinearExpression) = sparsity(d.g, 1)
+@inbounds set(d::NonlinearExpression{V,N,T}) where {V,N,T<:RelaxTag} = set(d.relax_cache, 1)
+@inbounds info(d::NonlinearExpression{V,N,T}) where {V,N,T<:RelaxTag} = info(d.relax_cache, 1)
+@inbounds num(d::NonlinearExpression{V,N,T}) where {V,N,T<:RelaxTag} = num(d.relax_cache, 1)
+@inbounds is_num(d::NonlinearExpression) = is_num(d.relax_cache, 1)
+var_num(d::NonlinearExpression{V,N,T}) where {V,N,T<:RelaxTag} = N
+
+mc_type(rc::NonlinearExpression{V,N,T}) where {V,N,T<:RelaxTag} = MC{N,T}
 
 """
 $(TYPEDEF)
@@ -93,35 +97,77 @@ function BufferedNonlinearFunction()
     return BufferedNonlinearFunction{MC{1,NS},1,NS}(ex, saf)
 end
 
-function BufferedNonlinearFunction(rtype::RELAX_ATTRIBUTE, f::JuMP._FunctionStorage, b::MOI.NLPBoundsPair,
+function BufferedNonlinearFunction(aux_info, rtype::RELAX_ATTRIBUTE, f::JuMP._FunctionStorage, b::MOI.NLPBoundsPair,
                                    sub_sparsity::Dict{Int,Vector{Int}},
                                    subexpr_lin::Vector{JuMP._Derivatives.Linearity},
                                    op::OperatorRegistry, parameter_values,
                                    tag::T, use_apriori_flag::Bool) where T <: RelaxTag
 
-    ex = NonlinearExpression!(rtype, f, b, sub_sparsity, -1, subexpr_lin, op, parameter_values, tag, use_apriori_flag)
-    n = length(_sparsity(ex.g, 1))
+    ex = NonlinearExpression!(aux_info, rtype, f, b, sub_sparsity, -1, subexpr_lin, op, parameter_values, tag, use_apriori_flag)
+    n = length(sparsity(ex.g, 1))
     saf = SAF(SAT[SAT(0.0, VI(i)) for i = 1:n], 0.0)
     V = relax_info(rtype, n, tag)
     return BufferedNonlinearFunction{V,n,T}(ex, saf)
 end
 
-@inline _set_last_reverse!(d::BufferedNonlinearFunction{V,N,T}, v::Bool) where {V,N,T<:RelaxTag} = _set_last_reverse!(d.ex, v)
-function _set_variable_storage!(d::BufferedNonlinearFunction{V,N,T}, v::VariableValues{Float64}) where {V,N,T<:RelaxTag}
-    _set_variable_storage!(d.ex, v)
+function expand_sv!(out::Vector{Float64}, n::Int, m::Int, vs::Vector{Int}, gs::Vector{Int}, x::SVector{N,T}) where {N,T}
+    k = 1
+    for q = 1:m
+        i = @inbounds vs[q]
+        for j = k:n
+            if i == @inbounds gs[j]
+                @inbounds out[j] = x[q]
+                k = j
+                break
+            end
+        end
+    end
+    nothing
+end
+function _load_subexprs!(d::RelaxCache{V,N,T}, g, subexpressions, dep_subexprs) where {V,N,T<:RelaxTag}
+    gs = sparsity(g, 1)
+    for (i,ds) in enumerate(dep_subexprs)
+        s = subexpressions[ds]
+        if is_num(s)
+            store_subexpression_num!(d, num(s), i)
+        else
+            vs = sparsity(s)
+            v = set(s)
+            m = var_num(s)
+            expand_sv!(d._cv_grad_buffer, N, m, vs, gs, v.cv_grad)
+            expand_sv!(d._cc_grad_buffer, N, m, vs, gs, v.cc_grad)
+            cvg = SVector{N,Float64}(d._cv_grad_buffer)
+            ccg = SVector{N,Float64}(d._cc_grad_buffer)
+            store_subexpression_set!(d, MC{N,T}(v.cv, v.cc, v.Intv, cvg, ccg, false), i)
+        end
+    end
+    return
 end
 
-_has_value(d::BufferedNonlinearFunction) = _has_value(d.ex)
-_dep_subexpr_count(d::BufferedNonlinearFunction) = _dep_subexpr_count(d.ex)
-_set_has_value!(d::BufferedNonlinearFunction, v::Bool) = _set_has_value!(d.ex, v)
-_sparsity(d::BufferedNonlinearFunction) = _sparsity(d.ex)
-_set(d::BufferedNonlinearFunction{V,N,T}) where {V,N,T<:RelaxTag} = _set(d.ex)
-_num(d::BufferedNonlinearFunction{V,N,T}) where {V,N,T<:RelaxTag} = _num(d.ex)
-_lower_bound(d::BufferedNonlinearFunction{V,N,T}) where {V,N,T<:RelaxTag} = d.ex.lower_bound
-_upper_bound(d::BufferedNonlinearFunction{V,N,T}) where {V,N,T<:RelaxTag} = d.ex.upper_bound
+@inline _set_last_reverse!(d::BufferedNonlinearFunction{V,N,T}, v::Bool) where {V,N,T<:RelaxTag} = _set_last_reverse!(d.ex, v)
+function set_variable_storage!(d::BufferedNonlinearFunction{V,N,T}, v::VariableValues{Float64}) where {V,N,T<:RelaxTag}
+    set_variable_storage!(d.ex, v)
+end
+
+has_value(d::BufferedNonlinearFunction) = has_value(d.ex)
+dep_subexpr_count(d::BufferedNonlinearFunction) = dep_subexpr_count(d.ex)
+set_has_value!(d::BufferedNonlinearFunction, v::Bool) = set_has_value!(d.ex, v)
+function sparsity(d::BufferedNonlinearFunction)
+    #println("sparsity of function is = $(sparsity(d.ex))")
+    sparsity(d.ex)
+end
+function set(d::BufferedNonlinearFunction{V,N,T}) where {V,N,T<:RelaxTag}
+    #println("sparsity of function is = $(set(d.ex))")
+    set(d.ex)
+end
+num(d::BufferedNonlinearFunction{V,N,T}) where {V,N,T<:RelaxTag} = num(d.ex)
+lower_bound(d::BufferedNonlinearFunction{V,N,T}) where {V,N,T<:RelaxTag} = d.ex.lower_bound
+upper_bound(d::BufferedNonlinearFunction{V,N,T}) where {V,N,T<:RelaxTag} = d.ex.upper_bound
 # returns the interval bounds associated with the set
-_interval(d::BufferedNonlinearFunction{V,N,T}) where {V,N,T<:RelaxTag} = Interval{Float64}(_set(d))
-_is_num(d::BufferedNonlinearFunction) = _is_num(d.ex)
+interval(d::BufferedNonlinearFunction{V,N,T}) where {V,N,T<:RelaxTag} = Interval{Float64}(set(d))
+is_num(d::BufferedNonlinearFunction) = is_num(d.ex)
+
+mc_type(rc::BufferedNonlinearFunction{V,N,T}) where {V,N,T<:RelaxTag} = MC{N,T}
 
 
 """
@@ -151,6 +197,7 @@ Base.@kwdef mutable struct Evaluator <: MOI.AbstractNLPEvaluator
     subgrad_tol::Float64 = 1E-10
     relax_type::RelaxType                       = STD_RELAX
 end
+set_variable_values!(d::Evaluator, v) = d.variable_values = v
 
 """
 $(FUNCTIONNAME)
@@ -238,29 +285,34 @@ function eliminate_fixed_variables!(f::NonlinearExpression{V,N,T}, v::Vector{Var
             end
         end
     end
-
     return nothing
 end
 
-function eliminate_fixed_variables!(f::BufferedNonlinearFunction{N,T}, v::Vector{VariableInfo}) where {N,T<:RelaxTag}
-    eliminate_fixed_variables!(f.ex, v)
-end
-
-function f_init_prop!(t, g::DAT, c::RelaxCache, flag::Bool)
-    if flag
-        return f_init!(t, g, c)
+eliminate_fixed_variables!(f::BufferedNonlinearFunction{N,T}, v::Vector{VariableInfo}) where {N,T<:RelaxTag} = eliminate_fixed_variables!(f.ex, v)
+f_init_prop!(t, g::DAT, c::RelaxCache, flag::Bool) = flag ? f_init!(t, g, c) : fprop!(t, g, c)
+function forward_pass!(z::Evaluator, d::NonlinearExpression{V,N,T}) where {V,N,T<:RelaxTag}
+    b = d.relax_cache
+    update_box_and_pnt!(b.ic.v, z.variable_values, z.is_first_eval)
+    if b.use_apriori_mul
+        s = sparsity(d)
+        v = b.ic.v
+        x = v.x
+        x0 = v.x0
+        isempty(b.dp) && (b.dp = zeros(length(x));)
+        isempty(b.dP) && (b.dP = zeros(Interval{Float64}, length(x));)
+        for j in s
+            b.dp[j] = x[j] - x0[j]
+            b.dP[j] = Interval(lbd(b, j), ubd(b, j)) - x0[j]
+        end
     end
-    return fprop!(t, g, c)
-end
-function forward_pass!(x::Evaluator, d::NonlinearExpression{V,N,T}) where {V,N,T<:RelaxTag}
-    # Fix subexpression code...
-    #for i = 1:_dep_subexpr_count(d)
-    #    !prior_eval(x, i) && forward_pass!(x, x.subexpressions[i])
-    #end
-    #_load_subexprs!(d.relax_cache, x.subexpressions)
-    (x.relax_type == STD_RELAX)    && (return f_init_prop!(Relax(), d.g, d.relax_cache, x.is_first_eval))
-    (x.relax_type == MC_AFF_RELAX) && (return f_init_prop!(RelaxAA(d.grad_sparsity), d.g, d.relax_cache, x.is_first_eval))
-    return f_init_prop!(RelaxMulEnum(d.grad_sparsity), d.g, d.relax_cache, x.is_first_eval)
+    for i = 1:dep_subexpr_count(d)
+        j = d.g.dependent_subexpressions[i]
+        forward_pass!(z, z.subexpressions[j])
+    end
+    _load_subexprs!(d.relax_cache, d.g, z.subexpressions, d.g.dependent_subexpressions)
+    (z.relax_type == STD_RELAX)    && (return f_init_prop!(Relax(), d.g, d.relax_cache, z.is_first_eval))
+    (z.relax_type == MC_AFF_RELAX) && (return f_init_prop!(RelaxAA(d.grad_sparsity), d.g, d.relax_cache, z.is_first_eval))
+    return f_init_prop!(RelaxMulEnum(d.grad_sparsity), d.g, d.relax_cache, z.is_first_eval)
 end
 
 function forward_pass!(x::Evaluator, d::BufferedNonlinearFunction{V,N,T}) where {V,N,T<:RelaxTag}

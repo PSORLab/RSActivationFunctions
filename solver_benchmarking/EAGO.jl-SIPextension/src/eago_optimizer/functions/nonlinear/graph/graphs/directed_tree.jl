@@ -13,6 +13,7 @@ Abstract supertype used for attributes stored in a cache.
 abstract type AbstractCacheAttribute end
 
 Base.@kwdef mutable struct VariableValues{T<:Real}
+    x0::Vector{T}                          = T[]
     x::Vector{T}                           = T[]
     lower_variable_bounds::Vector{T}       = T[]
     upper_variable_bounds::Vector{T}       = T[]
@@ -21,12 +22,12 @@ Base.@kwdef mutable struct VariableValues{T<:Real}
     variable_types::Vector{VariableType}   = VariableType[]
 end
 
-@inline _val(b::VariableValues{T}, i::Int) where T = @inbounds b.x[i]
-@inline _lbd(b::VariableValues{T}, i::Int) where T = @inbounds b.lower_variable_bounds[i]
-@inline _ubd(b::VariableValues{T}, i::Int) where T = @inbounds b.upper_variable_bounds[i]
-_val(b::VariableValues{T}) where T = b.x
-_lbd(b::VariableValues{T}) where T = b.lower_variable_bounds
-_ubd(b::VariableValues{T}) where T = b.upper_variable_bounds
+@inline val(b::VariableValues{T}, i::Int) where T = @inbounds b.x[i]
+@inline lbd(b::VariableValues{T}, i::Int) where T = @inbounds b.lower_variable_bounds[i]
+@inline ubd(b::VariableValues{T}, i::Int) where T = @inbounds b.upper_variable_bounds[i]
+val(b::VariableValues{T}) where T = b.x
+lbd(b::VariableValues{T}) where T = b.lower_variable_bounds
+ubd(b::VariableValues{T}) where T = b.upper_variable_bounds
 
 function _get_x!(::Type{BranchVar}, out::Vector{T}, v::VariableValues{T}) where T<:Real
     @inbounds for i = 1:length(v.node_to_variable_map)
@@ -35,6 +36,17 @@ function _get_x!(::Type{BranchVar}, out::Vector{T}, v::VariableValues{T}) where 
     return nothing
 end
 
+function _initialize_or_copy!(y::VariableValues{T}, x::VariableValues{T}, s::Symbol) where {T<:Real}
+    isempty(getfield(y, s)) ? setfield!(y, s, copy(getfield(x, s))) : copy!(getfield(y, s), getfield(x, s))
+end
+function update_box_and_pnt!(y::VariableValues{T}, x::VariableValues{T}, update_box::Bool) where {T<:Real}
+    if update_box
+        _initialize_or_copy!(y, x, :x0)
+        _initialize_or_copy!(y, x, :lower_variable_bounds)
+        _initialize_or_copy!(y, x, :upper_variable_bounds)
+    end
+    _initialize_or_copy!(y, x, :x)
+end
 
 """
     DirectedTree
@@ -75,50 +87,52 @@ end
 const DAT = DirectedTree
 
 # node property access functions that can be defined at abstract type
-_node(g::DAT, i)            = g.nodes[i]
-_nodes(g::DAT)              = g.nodes
+node(g::DAT, i)            = g.nodes[i]
+nodes(g::DAT)              = g.nodes
 
-_variable(g::DAT, i)        = g.variables[i]
-_variables(g::DAT)          = g.variables
+variable(g::DAT, i)        = g.variables[i]
+variables(g::DAT)          = g.variables
 
-_constant_value(g::DAT, i)  = g.constant_values[i]
-_constant_values(g::DAT)    = g.constant_values
-_parameter_value(g::DAT, i) = g.parameter_values[i]
-_parameter_values(g::DAT)   = g.parameter_values
+constant_value(g::DAT, i)  = g.constant_values[i]
+constant_values(g::DAT)    = g.constant_values
+parameter_value(g::DAT, i) = g.parameter_values[i]
+parameter_values(g::DAT)   = g.parameter_values
 
-_node_class(g::DAT, i)      = _node_class(_node(g, i))
-_ex_type(g::DAT, i)         = _ex_type(_node(g, i))
-_first_index(g::DAT, i)     = _first_index(_node(g, i))
-_secondary_index(g::DAT, i) = _secondary_index(_node(g, i))
-_arity(g::DAT, i)           = _arity(_node(g, i))
-_children(g::DAT, i)        = _children(_node(g, i))
-_child(g::DAT, i, j)        = _child(_node(g, j), i)
+node_class(g::DAT, i)      = node_class(node(g, i))
+ex_type(g::DAT, i)         = ex_type(node(g, i))
+first_index(g::DAT, i)     = first_index(node(g, i))
+secondary_index(g::DAT, i) = secondary_index(node(g, i))
+arity(g::DAT, i)           = arity(node(g, i))
+children(g::DAT, i)        = children(node(g, i))
+child(g::DAT, i, j)        = child(node(g, j), i)
 
-_node_count(g::DAT)     = g.node_count
-_variable_count(g::DAT) = g.variable_count
-_constant_count(g::DAT) = g.constant_count
+is_binary(g::DAT, i) = arity(g, i) == 2
 
-_dep_subexpr_count(g::DAT)            = g.dep_subexpr_count
-_sparsity(g::DAT, i)                  = g.sparsity
-_rev_sparsity(g::DAT, i::Int, k::Int) = g.rev_sparsity[i]
+node_count(g::DAT)     = g.node_count
+variable_count(g::DAT) = g.variable_count
+constant_count(g::DAT) = g.constant_count
 
-_user_univariate_operator(g::DAT, i) = g.user_operators.univariate_operator_f[i]
-_user_multivariate_operator(g::DAT, i) = g.user_operators.multivariate_operator_evaluator[i]
+dep_subexpr_count(g::DAT)            = length(g.dependent_subexpressions)
+sparsity(g::DAT, i)                  = g.sparsity
+rev_sparsity(g::DAT, i::Int, k::Int) = g.rev_sparsity[i]
+
+user_univariate_operator(g::DAT, i) = g.user_operators.univariate_operator_f[i]
+user_multivariate_operator(g::DAT, i) = g.user_operators.multivariate_operator_evaluator[i]
 
 
-function DirectedTree(d, op::OperatorRegistry, sub_sparsity::Dict{Int,Vector{Int}}, subexpr_linearity, parameter_values)
+function DirectedTree(aux_info, d, op::OperatorRegistry, sub_sparsity::Dict{Int,Vector{Int}}, subexpr_linearity, parameter_values, is_sub, subexpr_indx)
 
     nd = copy(d.nd)
     adj = copy(d.adj)
     const_values = copy(d.const_values)
 
-    sparsity, dependent_subexpressions = _compute_sparsity(d, sub_sparsity)
+    sparsity, dependent_subexpressions = _compute_sparsity(d, sub_sparsity, is_sub, subexpr_indx)
     rev_sparsity = Dict{Int,Int}()
     for (i,s) in enumerate(sparsity)
         rev_sparsity[s] = i
     end
 
-    nodes = _convert_node_list(d.nd, op)
+    nodes = _convert_node_list(aux_info, d.nd, op)
     lin = linearity(nd, adj, subexpr_linearity)
     DirectedTree(nodes = nodes,
                     variables = rev_sparsity,
@@ -141,9 +155,9 @@ forward_uni = [i for i in instances(AtomType)]
 setdiff!(forward_uni, [VAR_ATOM; PARAM_ATOM; CONST_ATOM; SELECT_ATOM; SUBEXPR])
 f_switch = binary_switch(forward_uni, is_forward = true)
 @eval function fprop!(t::T, ex::Expression, g::DAT, c::AbstractCache , k::Int) where T<:AbstractCacheAttribute
-    id = _ex_type(g, k)
+    id = ex_type(g, k)
     $f_switch
-    #error("fprop! for ex_type = $id not defined.")
+    error("fprop! for ex_type = $id not defined.")
     return
 end
 
@@ -151,8 +165,8 @@ reverse_uni = [i for i in instances(AtomType)]
 setdiff!(reverse_uni, [VAR_ATOM; PARAM_ATOM; CONST_ATOM; SELECT_ATOM; SUBEXPR])
 r_switch = binary_switch(reverse_uni, is_forward = false)
 @eval function rprop!(t::T, ex::Expression, g::DAT, c::AbstractCache, k::Int) where T<:AbstractCacheAttribute
-    id = _ex_type(g, k)
+    id = ex_type(g, k)
     $r_switch
-    #error("rprop! for ex_type = $id not defined.")
+    error("rprop! for ex_type = $id not defined.")
     return
 end

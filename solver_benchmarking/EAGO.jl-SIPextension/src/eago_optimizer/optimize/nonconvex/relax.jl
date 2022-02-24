@@ -24,8 +24,8 @@ function is_safe_cut!(m::GlobalOptimizer, f::SAF)
     safe_l = m._parameters.cut_safe_l
     safe_u = m._parameters.cut_safe_u
     safe_b = m._parameters.cut_safe_b
-    (abs(f.constant) > safe_b) && return false # violates |b| <= safe_b
 
+    (abs(f.constant) > safe_b) && return false # violates |b| <= safe_b
     term_count = length(f.terms)
     @inbounds for i = 1:term_count
         ai = f.terms[i].coefficient
@@ -36,7 +36,9 @@ function is_safe_cut!(m::GlobalOptimizer, f::SAF)
             @inbounds for j = i:term_count     # violates safe_l <= abs(ai/aj) <= safe_u
                 aj = f.terms[j].coefficient
                 if aj !== 0.0
-                    !(safe_l <= abs(ai/aj) <= safe_u) && return false
+                    if !(safe_l <= abs(ai/aj) <= safe_u)
+                        return false
+                    end
                 end
             end
         end
@@ -80,8 +82,8 @@ function affine_relax_quadratic!(m::GlobalOptimizer, func::SQF, buffer::Dict{Int
     # the node.
     for term in func.quadratic_terms
         a = term.coefficient
-        i = term.variable_index_1.value
-        j = term.variable_index_2.value
+        i = term.variable_1.value
+        j = term.variable_2.value
         x0 = _lower_solution(FullVar(), m, i)
         xL = _lower_bound(FullVar(), m, i)
         xU = _upper_bound(FullVar(), m, i)
@@ -131,7 +133,7 @@ function affine_relax_quadratic!(m::GlobalOptimizer, func::SQF, buffer::Dict{Int
     end
 
     for t in func.affine_terms
-        buffer[t.variable_index.value] += t.coefficient
+        buffer[t.variable.value] += t.coefficient
     end
     count = 1
     for (key, value) in buffer
@@ -146,7 +148,7 @@ end
 """
 $(TYPEDSIGNATURES)
 """
-function relax!(m::GlobalOptimizer, f::BufferedQuadraticIneq, k::Int, check_safe::Bool)
+function relax!(m::GlobalOptimizer, f::BQI, k::Int, check_safe::Bool)
     affine_relax_quadratic!(m, f.func, f.buffer, f.saf)
     valid_cut_flag = add_affine_relaxation!(m, f.saf, check_safe)
     return valid_cut_flag
@@ -155,11 +157,9 @@ end
 """
 $(TYPEDSIGNATURES)
 """
-function relax!(m::GlobalOptimizer, f::BufferedQuadraticEq, indx::Int, check_safe::Bool)
-
+function relax!(m::GlobalOptimizer, f::BQE, i::Int, check_safe::Bool)
     affine_relax_quadratic!(m, f.func, f.buffer, f.saf)
     valid_cut_flag = add_affine_relaxation!(m, f.saf, check_safe)
-
     affine_relax_quadratic!(m, f.minus_func, f.buffer, f.saf)
     valid_cut_flag &= add_affine_relaxation!(m, f.saf, check_safe)
     return valid_cut_flag
@@ -187,21 +187,20 @@ function relax!(m::GlobalOptimizer{R,S,Q}, f::BufferedNonlinearFunction{V,N,T}, 
     forward_pass!(d, f)
     valid_cut_flag = true
 
-    grad_sparsity = _sparsity(f)
-    if _is_num(f)
-        f.saf.constant = _num(f)
+    grad_sparsity = sparsity(f)
+    if is_num(f)
+        f.saf.constant = num(f)
         for i = 1:length(grad_sparsity)
             f.saf.terms[i] = SAT(0.0, VI(grad_sparsity[i]))
         end
     else
-        v = _set(f)
-        #@show v, _lower_bound(f), _upper_bound(f)
+        v = set(f)
         if !isempty(v)
             # if has less than or equal to bound (<=)
-            if isfinite(_upper_bound(f))
+            if isfinite(upper_bound(f))
                 lower_cut_valid = !isnan(v.cv) && isfinite(v.cv)
                 if lower_cut_valid
-                    f.saf.constant = v.cv - _upper_bound(f)
+                    f.saf.constant = v.cv - upper_bound(f)
                     for (i, k) in enumerate(grad_sparsity)
                         c = v.cv_grad[i]
                         f.saf.terms[i] = SAT(c, VI(k))
@@ -211,10 +210,10 @@ function relax!(m::GlobalOptimizer{R,S,Q}, f::BufferedNonlinearFunction{V,N,T}, 
                 end
             end
             # if has greater than or equal to bound (>=)
-            if isfinite(_lower_bound(f))
+            if isfinite(lower_bound(f))
                 upper_cut_valid = !isnan(v.cc) && isfinite(v.cc)
                 if upper_cut_valid
-                    f.saf.constant = -v.cc +  _lower_bound(f)
+                    f.saf.constant = -v.cc + lower_bound(f) 
                     for (i, k) in enumerate(grad_sparsity)
                         c = -v.cc_grad[i]
                         f.saf.terms[i] = SAT(c, VI(k))
@@ -228,4 +227,4 @@ function relax!(m::GlobalOptimizer{R,S,Q}, f::BufferedNonlinearFunction{V,N,T}, 
     return valid_cut_flag
 end
 
-relax!(m::GlobalOptimizer, f::Union{Nothing, SV, AffineFunctionIneq}, k::Int, b::Bool) = true
+relax!(m::GlobalOptimizer, f::Union{Nothing, VI, AFI}, k::Int, b::Bool) = true

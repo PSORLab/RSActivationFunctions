@@ -33,6 +33,7 @@ mutable struct Optimizer{Q,S,T} <: MOI.AbstractOptimizer
     enable_optimize_hook::Bool
     ext::Dict{Symbol, Any}
   
+    _auxillary_variable_info::Union{Nothing,_AuxVarData}
     _global_optimizer::GlobalOptimizer{Q,S,T}
     _input_problem::InputProblem
     _working_problem::ParsedProblem
@@ -53,7 +54,7 @@ mutable struct Optimizer{Q,S,T} <: MOI.AbstractOptimizer
     _node_count::Int
 end
 function Optimizer{Q,S,T}(sb::SubSolvers{Q,S,T}) where {Q,S,T}
-    return Optimizer{Q,S,T}(sb, false, Dict{Symbol,Any}(), GlobalOptimizer{Q,S,T}( _subsolvers = sb),
+    return Optimizer{Q,S,T}(sb, false, Dict{Symbol,Any}(), nothing, GlobalOptimizer{Q,S,T}( _subsolvers = sb),
                      InputProblem(), ParsedProblem(), EAGOParameters(),
                      MOI.OPTIMIZE_NOT_CALLED, MOI.OTHER_RESULT_STATUS,
                      0.0, -Inf, Inf, Inf, 0, 0)
@@ -71,3 +72,18 @@ function Optimizer(subsolver_block::SubSolvers{Q,S,T} = SubSolvers(); kwargs...)
     m._global_optimizer = GlobalOptimizer{Incremental{Q},Incremental{S},T}(; _subsolvers = sb)
     return m
 end
+
+_constraints(m::Optimizer, ::Type{VI}, ::Type{LT}) = m._input_problem._vi_leq_constraints
+_constraints(m::Optimizer, ::Type{VI}, ::Type{GT}) = m._input_problem._vi_geq_constraints
+_constraints(m::Optimizer, ::Type{VI}, ::Type{ET}) = m._input_problem._vi_eq_constraints
+_constraints(m::Optimizer, ::Type{VI}, ::Type{IT}) = m._input_problem._vi_it_constraints
+_constraints(m::Optimizer, ::Type{VI}, ::Type{ZO}) = m._input_problem._vi_zo_constraints
+_constraints(m::Optimizer, ::Type{VI}, ::Type{MOI.Integer}) = m._input_problem._vi_int_constraints
+
+_constraints(m::Optimizer, ::Type{SAF}, ::Type{LT}) = _constraints(m._input_problem, SAF, LT)
+_constraints(m::Optimizer, ::Type{SAF}, ::Type{GT}) = _constraints(m._input_problem, SAF, GT)
+_constraints(m::Optimizer, ::Type{SAF}, ::Type{ET}) = _constraints(m._input_problem, SAF, ET)
+
+_constraints(m::Optimizer, ::Type{SQF}, ::Type{LT}) = _constraints(m._input_problem, SQF, LT)
+_constraints(m::Optimizer, ::Type{SQF}, ::Type{GT}) = _constraints(m._input_problem, SQF, GT)
+_constraints(m::Optimizer, ::Type{SQF}, ::Type{ET}) = _constraints(m._input_problem, SQF, ET)

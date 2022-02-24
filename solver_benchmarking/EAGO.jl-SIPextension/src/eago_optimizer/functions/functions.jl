@@ -9,6 +9,8 @@
 # Defines variable info and function types.
 #############################################################################
 
+include(joinpath(@__DIR__, "nonlinear\\auxiliary_variables.jl"))
+
 """
 $(TYPEDEF)
 
@@ -54,22 +56,24 @@ mutable struct AffineFunctionIneq <: AbstractEAGOConstraint
     constant::Float64
     len::Int
 end
+const AFI = AffineFunctionIneq
 
 AffineFunctionIneq() = AffineFunctionIneq(Tuple{Float64,Int}[], 0.0, 0)
 function AffineFunctionIneq(f::SAF, s::LT)
-    terms = map(x -> (x.coefficient, x.variable_index.value), f.terms)
+    terms = map(x -> (x.coefficient, x.variable.value), f.terms)
     AffineFunctionIneq(terms, f.constant - s.upper, length(f.terms))
 end
 function AffineFunctionIneq(f::SAF, s::GT)
-    terms = map(x -> (-x.coefficient, x.variable_index.value), f.terms)
+    terms = map(x -> (-x.coefficient, x.variable.value), f.terms)
     AffineFunctionIneq(terms, s.lower - f.constant, length(f.terms))
 end
-function AffineFunctionIneq(f::SV; is_max = false)
+function AffineFunctionIneq(f::VI; is_max = false)
     if is_max
-        return AffineFunctionIneq(Tuple{Float64,Int}[(-1.0, f.variable.value)], 0.0, 1)
+        return AffineFunctionIneq(Tuple{Float64,Int}[(-1.0, f.value)], 0.0, 1)
     end
-    AffineFunctionIneq(Tuple{Float64,Int}[(1.0, f.variable.value)], 0.0, 1)
+    AffineFunctionIneq(Tuple{Float64,Int}[(1.0, f.value)], 0.0, 1)
 end
+
 
 """
 $(TYPEDEF)
@@ -82,6 +86,7 @@ mutable struct AffineFunctionEq <: AbstractEAGOConstraint
     constant::Float64
     len::Int
 end
+const AFE = AffineFunctionEq
 
 AffineFunctionEq() = AffineFunctionEq(Tuple{Float64,Int}[], 0.0, 0)
 function AffineFunctionEq(func::SAF, set::ET)
@@ -130,6 +135,7 @@ mutable struct BufferedQuadraticIneq <: AbstractEAGOConstraint
     saf::SAF
     len::Int
 end
+const BQI = BufferedQuadraticIneq
 
 """
 $(TYPEDEF)
@@ -143,6 +149,7 @@ mutable struct BufferedQuadraticEq <: AbstractEAGOConstraint
     saf::SAF
     len::Int
 end
+const BQE = BufferedQuadraticEq
 
 #=
 mutable struct BufferedConvexQuadratic <: AbstractEAGOConstraint
@@ -158,12 +165,12 @@ function create_buffer_dict(func::SQF)
     buffer = Dict{Int, Float64}()
 
     for term in func.quadratic_terms
-        buffer[term.variable_index_1.value] = 0.0
-        buffer[term.variable_index_2.value] = 0.0
+        buffer[term.variable_1.value] = 0.0
+        buffer[term.variable_2.value] = 0.0
     end
 
     for term in func.affine_terms
-        buffer[term.variable_index.value] = 0.0
+        buffer[term.variable.value] = 0.0
     end
 
     return buffer
@@ -220,9 +227,9 @@ function eliminate_fixed_variables!(f::T, v::Vector{VariableInfo}) where T <: Un
     i = 1
     while i + deleted_count <= f.len
         term = f.sqf.terms[i]
-        variable_info_1 = v[term.variable_index_1.value]
-        variable_info_2 = v[term.variable_index_2.value]
-        if variable_info_1.is_fixed && variable_index_2.is_fixed
+        variable_info_1 = v[term.variable_1.value]
+        variable_info_2 = v[term.variable_2.value]
+        if variable_info_1.is_fixed && variable_info_2.is_fixed
             f.sqf.constant += coeff*variable_info_1.lower_bound*variable_info_2.lower_bound
             deleteat!(f.sqf.terms, i)
             deleted_count += 1

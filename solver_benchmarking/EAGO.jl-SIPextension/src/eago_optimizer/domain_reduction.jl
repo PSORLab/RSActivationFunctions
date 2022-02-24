@@ -61,42 +61,25 @@ Excludes OBBT on variable indices that are tight for the solution of the relaxat
 """
 function trivial_filtering!(m::GlobalOptimizer{R,S,Q}, n::NodeBB) where {R,S,Q<:ExtensionType}
     
-    #println(" ")
-    #println("trivial")
-    #@show m._obbt_variable_count
     d = _relaxed_optimizer(m)
     obbt_tolerance = _obbt_tolerance(m)
     if set_preprocess_status(m,d) == RRS_OPTIMAL
         for j = 1:m._obbt_variable_count
             vi = VI(_bvi(m, m._relaxed_variable_index[j].value))
-            #println(" ")
-            #@show vi, n.lower_variable_bounds[j], n.upper_variable_bounds[j], MOI.get(d, MOI.VariablePrimal(),vi)
-            #@show _bvi(m,vi)
             if m._obbt_working_lower_index[j]
                 z = MOI.get(d, MOI.VariablePrimal(),vi) - n.lower_variable_bounds[j]
-                #@show z
-                #@show abs(z)
-                #@show obbt_tolerance
-                #@show abs(z) <= obbt_tolerance
                 if abs(z) <= obbt_tolerance
                     m._obbt_working_lower_index[j] = false
                 end
             end
             if m._obbt_working_upper_index[j]
                 z = n.upper_variable_bounds[j] - MOI.get(d, MOI.VariablePrimal(), vi)
-                #@show z
-                #@show abs(z)
-                #@show obbt_tolerance
-                #@show abs(z) <= obbt_tolerance
-                #@show abs(z) <= obbt_tolerance
                 if abs(z) <= obbt_tolerance
                     m._obbt_working_upper_index[j] = false
                 end
             end
         end
     end
-    #@show m._obbt_working_lower_index
-    #@show m._obbt_working_upper_index
     return
 end
 
@@ -115,8 +98,6 @@ $(FUNCTIONNAME)
 Excludes OBBT on variable indices after a search in a filtering direction.
 """
 function aggressive_filtering!(m::GlobalOptimizer{R,S,Q}, n::NodeBB) where {R,S,Q<:ExtensionType}
-    #println(" ")
-    #println("agressive filtering")
     if _obbt_aggressive_on(m)
         # Initial filtering vector (negative one direction per remark in Gleixner2017)
         d = _relaxed_optimizer(m)
@@ -125,8 +106,6 @@ function aggressive_filtering!(m::GlobalOptimizer{R,S,Q}, n::NodeBB) where {R,S,
 
         # Copy prior index set (ignores linear and binary terms)
         obbt_variable_count = m._obbt_variable_count
-        #@show m._obbt_working_lower_index
-        #@show m._obbt_working_upper_index
         copyto!(m._old_low_index, m._obbt_working_lower_index)
         copyto!(m._old_upp_index, m._obbt_working_upper_index)
         copyto!(m._new_low_index, m._obbt_working_lower_index)
@@ -163,14 +142,12 @@ function aggressive_filtering!(m::GlobalOptimizer{R,S,Q}, n::NodeBB) where {R,S,
             # Set objective in OBBT problem to filtering vector
             MOI.set(d, MOI.ObjectiveSense(), MOI.MAX_SENSE)
             MOI.set(d, MOI.ObjectiveFunction{SAF}(), SAF(SAT.(v, m._relaxed_variable_index), 0.0))
-            #@show v, m._relaxed_variable_index
 
             # Optimizes the problem and if successful filter additional bounds
             MOI.optimize!(d)
 
             if set_preprocess_status(m,d) == RRS_OPTIMAL
                 variable_primal = MOI.get(d, MOI.VariablePrimal(), m._relaxed_variable_index)
-                #@show variable_primal
                 copyto!(m._new_low_index, m._old_low_index)
                 copyto!(m._new_upp_index, m._old_upp_index)
                 for i = 1:obbt_variable_count
@@ -207,7 +184,18 @@ function set_reference_point!(m::GlobalOptimizer)
         node_x = current_xref[i]
         solution_x = evaluator_x[i]
         if node_x !== solution_x
-            evaluator_x[i] = node_x
+            l = _lower_bound(FullVar(), m, i)
+            u = _upper_bound(FullVar(), m, i)
+            if isfinite(l) && isfinite(u)
+                x = node_x
+            elseif isfinite(l)
+                x = min(0.0, u)
+            elseif isfinite(u)
+                x = max(0.0, l)
+            else
+                x = 0.0
+            end
+            evaluator_x[i] = x
             new_reference_point = true
         end
     end
@@ -234,6 +222,30 @@ function set_reference_point!(m::GlobalOptimizer)
     return nothing
 end
 
+# TODO replace with argmin statement post Julia 1.7 LTS version
+function active_argmin(f, b, n)
+    vi = -1; v = Inf
+    if any(b)
+        for i = 1:n
+            if b[i] && (f(i) <= v)
+                vi = i
+                v = f(i)
+            end
+        end
+    end
+    vi, v
+end
+Δxl(m, i) = _lower_solution(BranchVar(),m,i) - _lower_bound(BranchVar(),m,i)
+Δux(m, i) = _upper_bound(BranchVar(),m,i) - _lower_solution(BranchVar(),m,i)
+
+function reset_objective!(m::GlobalOptimizer{R,S,Q}, d) where {R,S,Q<:ExtensionType}
+    MOI.set(d, MOI.ObjectiveSense(), MOI.MIN_SENSE)
+    MOI.set(d, MOI.ObjectiveFunction{SAF}(), m._working_problem._objective_saf)
+    MOI.optimize!(d)
+    nothing
+end
+
+
 """
 $(FUNCTIONNAME)
 
@@ -245,15 +257,9 @@ function obbt!(m::GlobalOptimizer{R,S,Q}) where {R,S,Q<:ExtensionType}
 
     feasibility = true
     n = m._current_node
-    #@show n.lower_variable_bounds
-    #@show n.upper_variable_bounds
     d = _relaxed_optimizer(m)
 
-    #println(" ")
-    #println("begin obbt")
-
     if relax_problem!(m)
-        #println("post-relax")
         MOI.set(d, MOI.ObjectiveSense(), MOI.MIN_SENSE)
         MOI.optimize!(d)
 
@@ -261,26 +267,14 @@ function obbt!(m::GlobalOptimizer{R,S,Q}) where {R,S,Q<:ExtensionType}
         obbt_variable_count = m._obbt_variable_count
         fill!(m._obbt_working_lower_index, true)
         fill!(m._obbt_working_upper_index, true)
-        #@show m._obbt_working_lower_index
-        #@show m._obbt_working_upper_index
 
         # Filters out any indicies with active bounds on variables
         # determined by solving the feasibility problem
         trivial_filtering!(m, n)
-        #println("trivial filtering")
-        #@show n.lower_variable_bounds
-        #@show n.upper_variable_bounds
-
         feasibility = aggressive_filtering!(m, n)
-        #println("post aggressive filtering")
-        #@show n.lower_variable_bounds
-        #@show n.upper_variable_bounds
-
-        #@show set_preprocess_status(m,d)
         if set_preprocess_status(m,d) == RRS_OPTIMAL
             xLP = MOI.get(d, MOI.VariablePrimal(), m._relaxed_variable_index)
         else
-            #println("obbt return 1")
             return false
         end
 
@@ -288,56 +282,16 @@ function obbt!(m::GlobalOptimizer{R,S,Q}) where {R,S,Q<:ExtensionType}
         # or the node is empty and the problem is thus proven infeasible
         while (any(m._obbt_working_lower_index) || any(m._obbt_working_upper_index)) && !isempty(n)
 
-            #println("post iteration start")
-            #@show n.lower_variable_bounds
-            #@show n.upper_variable_bounds
-
-            # Get lower value
-            lower_indx = -1;     upper_indx = -1
-            lower_value = Inf;   upper_value = Inf
-            #@show m._obbt_working_lower_index
-            #@show m._obbt_working_upper_index
-
-            # min of xLP - yL on active
-            if any(m._obbt_working_lower_index)
-                for i = 1:obbt_variable_count
-                    if m._obbt_working_lower_index[i]
-                        temp_value = _lower_solution(BranchVar(),m,i) - _lower_bound(BranchVar(),m,i)
-                        #@show i, temp_value
-                        if temp_value <= lower_value   # Need less than or equal to handle unbounded cases
-                            lower_value = temp_value
-                            lower_indx = i
-                        end
-                    end
-                end
-            end
-
-            # min of yU - xLP on active
-            if any(m._obbt_working_upper_index)
-                for i = 1:obbt_variable_count
-                    if m._obbt_working_upper_index[i]
-                        temp_value = _upper_bound(BranchVar(),m,i) - _lower_solution(BranchVar(),m,i)
-                        #@show i, temp_value
-                        if temp_value <= upper_value
-                            upper_value = temp_value
-                            upper_indx = i
-                        end
-                    end
-                end
-            end
+              # min of xLP - yL and xU - xLP for potential directions
+            lower_indx, lower_value = active_argmin(i -> Δxl(m, i), m._obbt_working_lower_index, obbt_variable_count)
+            upper_indx, upper_value = active_argmin(i -> Δux(m, i), m._obbt_working_lower_index, obbt_variable_count)
 
             # default to upper bound if no lower bound is found, use maximum distance otherwise
-            #@show lower_value, upper_value, lower_indx, upper_indx
             if lower_value <= upper_value && lower_indx > 0
-                #println(" ")
-                #println("start lower refinement")
                 m._obbt_working_lower_index[lower_indx] = false
                 MOI.set(d, MOI.ObjectiveSense(), MOI.MIN_SENSE)
-                #@show SV(m._relaxed_variable_index[_bvi(m, lower_indx)])
-                MOI.set(d, MOI.ObjectiveFunction{SV}(), SV(m._relaxed_variable_index[_bvi(m, lower_indx)]))
+                MOI.set(d, MOI.ObjectiveFunction{VI}(), m._relaxed_variable_index[_bvi(m, lower_indx)])
                 MOI.optimize!(d)
-                #@show MOI.get(d, MOI.ObjectiveValue())
-
                 status = set_preprocess_status(m,d)
                 if status == RRS_OPTIMAL
                     xLP .= MOI.get(d, MOI.VariablePrimal(), m._relaxed_variable_index)
@@ -352,19 +306,15 @@ function obbt!(m::GlobalOptimizer{R,S,Q}) where {R,S,Q<:ExtensionType}
                     if updated_value > previous_value && (updated_value - previous_value) > 1E-6
                         sv_geq_ci = m._node_to_sv_geq_ci[lower_indx]
                         MOI.set(d, MOI.ConstraintSet(), sv_geq_ci, GT(updated_value))
-                        #@show sv_geq_ci, GT(updated_value)
                         n.lower_variable_bounds[lower_indx] = updated_value
-                        #@show "lower", lower_indx, updated_value
                     end
 
                     if isempty(n)
-                        #println("obbt return 2")
                         feasibility = false
                         break
                     end
 
                 elseif status == RRS_INFEASIBLE
-                    #println("obbt return 3")
                     feasibility = false
                     break
                 else
@@ -373,25 +323,16 @@ function obbt!(m::GlobalOptimizer{R,S,Q}) where {R,S,Q<:ExtensionType}
 
             elseif upper_indx > 0
                 
-                #println(" ")
-                #println("start upper refinement")
                 m._obbt_working_upper_index[upper_indx] = false
                 MOI.set(d, MOI.ObjectiveSense(), MOI.MAX_SENSE)
-                #@show SV(m._relaxed_variable_index[_bvi(m, upper_indx)])
-                MOI.set(d, MOI.ObjectiveFunction{SV}(), SV(m._relaxed_variable_index[_bvi(m, upper_indx)]))
+                MOI.set(d, MOI.ObjectiveFunction{VI}(), m._relaxed_variable_index[_bvi(m, upper_indx)])
                 MOI.optimize!(d)
-                #@show MOI.get(d, MOI.ObjectiveValue())
 
                 status = set_preprocess_status(m,d)
                 if status == RRS_OPTIMAL
-                    #@show xLP
-                    #@show MOI.get(d, MOI.VariablePrimal(), m._relaxed_variable_index)
                     xLP .= MOI.get(d, MOI.VariablePrimal(), m._relaxed_variable_index)
-                    #@show xLP
                     updated_value = xLP[_bvi(m, upper_indx)]
                     previous_value = n.upper_variable_bounds[upper_indx]
-                    #@show updated_value
-                    #@show previous_value
 
                     # if bound is improved update node and corresponding constraint update
                     # the node bounds and the single variable bound in the relaxation
@@ -400,20 +341,16 @@ function obbt!(m::GlobalOptimizer{R,S,Q}) where {R,S,Q<:ExtensionType}
                     # constraint in the model is a LessThan.
                     if updated_value < previous_value && (previous_value - updated_value) > 1E-6
                         sv_leq_ci = m._node_to_sv_leq_ci[upper_indx]
-                        #@show sv_leq_ci, LT(updated_value)
                         MOI.set(d, MOI.ConstraintSet(), sv_leq_ci, LT(updated_value))
                         n.upper_variable_bounds[upper_indx] = updated_value
-                        #@show "upper", sv_leq_ci, upper_indx, updated_value
                     end
 
                     if isempty(n)
-                        #println("obbt return 4")
                         feasibility = false
                         break
                     end
 
                 elseif status == RRS_INFEASIBLE
-                    #println("obbt return 5")
                     feasibility = false
                     break
                 else
@@ -422,17 +359,10 @@ function obbt!(m::GlobalOptimizer{R,S,Q}) where {R,S,Q<:ExtensionType}
             else
                 break
             end
-            #println("pre-trivial filtering")
-            #@show n.lower_variable_bounds
-            #@show n.upper_variable_bounds
             trivial_filtering!(m, n)
         end
     end
-
-    #println("post obbt filtering")
-    #@show n.lower_variable_bounds
-    #@show n.upper_variable_bounds
-
+    reset_objective!(m, d)
     return feasibility
 end
 
@@ -485,144 +415,100 @@ function fbbt!(m::GlobalOptimizer, f::AffineFunctionIneq)
     # compute full sum
     lower_bounds = m._lower_fbbt_buffer
     upper_bounds = m._upper_fbbt_buffer
-
     terms = f.terms
     temp_sum = -f.constant
-
     for k = 1:f.len
-
-        aik, indx_k = @inbounds terms[k]
-        if aik !== 0.0
-            aik_xL = aik*(@inbounds lower_bounds[indx_k])
-            aik_xU = aik*(@inbounds upper_bounds[indx_k])
+        aik, i = @inbounds terms[k]
+        if !iszero(aik)
+            aik_xL = aik*(@inbounds lower_bounds[i])
+            aik_xU = aik*(@inbounds upper_bounds[i])
             temp_sum -= min(aik_xL, aik_xU)
         end
     end
 
     # subtract extra term, check to see if implied bound is better, if so update the node and
     # the working sum if the node is now empty then break
-
     for k = 1:f.len
-
-        aik, indx_k = @inbounds terms[k]
-        if aik !== 0.0
-
-            xL = @inbounds lower_bounds[indx_k]
-            xU = @inbounds upper_bounds[indx_k]
-
+        aik, i = @inbounds terms[k]
+        if !iszero(aik)
+            xL = @inbounds lower_bounds[i]
+            xU = @inbounds upper_bounds[i]
             aik_xL = aik*xL
             aik_xU = aik*xU
-
             temp_sum += min(aik_xL, aik_xU)
             xh = temp_sum/aik
-
             if aik > 0.0
                 (xh < xL) && return false
-                if xh > xL
-                    @inbounds upper_bounds[indx_k] = xh
-                end
-
+                (xh > xL) && (@inbounds upper_bounds[i] = min(xh, xU))
             elseif aik < 0.0
                 (xh > xU) && return false
-                if xh < xU
-                    @inbounds lower_bounds[indx_k] = xh
-                end
-
+                (xh < xU) && (@inbounds lower_bounds[i] = max(xh, xL))
             else
                 temp_sum -= min(aik_xL, aik_xU)
                 continue
-
             end
-
-            aik_xL = aik*(@inbounds lower_bounds[indx_k])
-            aik_xU = aik*(@inbounds upper_bounds[indx_k])
+            aik_xL = aik*(@inbounds lower_bounds[i])
+            aik_xU = aik*(@inbounds upper_bounds[i])
             temp_sum -= min(aik_xL, aik_xU)
-
         end
     end
-
     return true
 end
 
 function fbbt!(m::GlobalOptimizer, f::AffineFunctionEq)
-
     # compute full sum
     lower_bounds = m._lower_fbbt_buffer
     upper_bounds = m._upper_fbbt_buffer
-
     terms = f.terms
     temp_sum_leq = -f.constant
     temp_sum_geq = -f.constant
 
     for k = 1:f.len
-        aik, indx_k = @inbounds terms[k]
-
-        if aik !== 0.0
-            aik_xL = aik*(@inbounds lower_bounds[indx_k])
-            aik_xU = aik*(@inbounds upper_bounds[indx_k])
+        aik, i = @inbounds terms[k]
+        if !iszero(aik)
+            aik_xL = aik*(@inbounds lower_bounds[i])
+            aik_xU = aik*(@inbounds upper_bounds[i])
             temp_sum_leq -= min(aik_xL, aik_xU)
             temp_sum_geq -= max(aik_xL, aik_xU)
-
         end
     end
 
     # subtract extra term, check to see if implied bound is better, if so update the node and
     # the working sum if the node is now empty then break
     for k = 1:f.len
-
-        aik, indx_k = @inbounds terms[k]
-        if aik !== 0.0
-
-            xL = @inbounds lower_bounds[indx_k]
-            xU = @inbounds upper_bounds[indx_k]
-
+        aik, i = @inbounds terms[k]
+        if !iszero(aik)
+            xL = @inbounds lower_bounds[i]
+            xU = @inbounds upper_bounds[i]
             aik_xL = aik*xL
             aik_xU = aik*xU
-
             temp_sum_leq += min(aik_xL, aik_xU)
             temp_sum_geq += max(aik_xL, aik_xU)
-
             xh_leq = temp_sum_leq/aik
             xh_geq = temp_sum_geq/aik
-
             if aik > 0.0
                 (xh_leq < xL) && return false
-                if xh_leq > xL
-                    @inbounds upper_bounds[indx_k] = xh_leq
-                end
+                (xh_leq > xL) && (@inbounds upper_bounds[i] = min(xh_leq, xU))
                 (xh_geq > xU) && return false
-                if (xh_geq < xU)
-                    @inbounds lower_bounds[indx_k] = xh_geq
-                end
-
+                (xh_geq < xU) && (@inbounds lower_bounds[i] = max(xh_geq, xL))
             elseif aik < 0.0
                 (xh_leq > xU) && return false
-                if xh_leq < xU
-                    @inbounds lower_bounds[indx_k] = xh_leq
-                end
+                (xh_leq < xU) && (@inbounds lower_bounds[i] = max(xh_leq, xL))
                 (xh_geq < xL) && return false
-                if (xh_geq > xL)
-                    @inbounds upper_bounds[indx_k] = xh_geq
-                end
-
+                (xh_geq > xL) && (@inbounds upper_bounds[i] = min(xh_geq, xU))
             else
                 temp_sum_leq -= min(aik_xL, aik_xU)
                 temp_sum_geq -= max(aik_xL, aik_xU)
                 continue
-
             end
-            aik_xL = aik*(@inbounds lower_bounds[indx_k])
-            aik_xU = aik*(@inbounds upper_bounds[indx_k])
-
+            aik_xL = aik*(@inbounds lower_bounds[i])
+            aik_xU = aik*(@inbounds upper_bounds[i])
             temp_sum_leq -= min(aik_xL, aik_xU)
             temp_sum_geq -= max(aik_xL, aik_xU)
         end
     end
-
     return true
 end
-
-cp_condition(m::GlobalOptimizer) = false
 
 _propagate_constraint!(d, f) = true
 function _propagate_constraint!(d, f::BufferedNonlinearFunction)
@@ -666,6 +552,8 @@ function set_constraint_propagation_fbbt!(m::GlobalOptimizer{R,S,Q}) where {R,S,
         m._new_eval_objective = false
         _get_x!(BranchVar, m._current_xref, evaluator)
         m._current_node = retrieve_node(evaluator)
+
+        interval_objective_bound!(m)
     end
 
     return feasible_flag
