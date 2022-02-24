@@ -12,7 +12,7 @@ In the paper associated with this data, we review methods for to constructing co
 We detailed relaxations of activation functions defined by peicewise fucntion violate the factorable function requirement and cannot be addressed with previous methods. In order to resolve these issues, we have developed a library of activation function envelopes for many commonly studided rectifier-type and sigmoid activation functions as well as newwe [SiLU](https://arxiv.org/abs/1710.05941) and [GELU](https://arxiv.org/abs/1606.08415) activation functions. These tighter relaxations were shown to translate to a dramatic reduction in CPU runtime required for solving optimization problems involving ANN models to epsilon-global optimality and reduce the number of numerical issues that occur due to over-estimation of intermediate terms. We further demonstrate that the factorable programming approach leads to superior computational performance over alternative state-of-the-art approaches.
 
 # Summary of Data
-The raw MLPs and benchmark problems associated with the numerical experiments in Section 5 are listed in the "MLP Benchmarking Set" folder. Results are summarized in table result_summary.xlsx. 
+The raw MLPs and benchmark problems associated with the numerical experiments available in the "solver_benchmarking/MINLPLib.jl/instances/" folder. Results provided in the "solver_benchmarking/solver_benchmark_result" folder. 
 
 # How to Reproduce Benchmark Results
 A CSV file containing the results may be reproduced using in the following fashion. 
