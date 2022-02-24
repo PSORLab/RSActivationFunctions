@@ -1,9 +1,9 @@
 # Adds packages that don't require special setup
 using Pkg
 #Pkg.develop(path = joinpath(@__DIR__, "McCormick.jl-master"))
+Pkg.develop(path = joinpath(@__DIR__, "McCormick.jl"))
 Pkg.develop(path = joinpath(@__DIR__, "MINLPLib.jl"))
 Pkg.develop(path = joinpath(@__DIR__, "EAGO.jl-SIPextension"))
-Pkg.add("McCormick")
 Pkg.add("JSON"); Pkg.add("DataFrames"); Pkg.add("CSV")
 Pkg.add("JuMP"); Pkg.add("IntervalArithmetic"); Pkg.add("LaTeXStrings")
 Pkg.add("Plots"); Pkg.add("StatsBase"); Pkg.add("BenchmarkProfiles")
@@ -34,9 +34,9 @@ end
 
 function eago_factory()
     m = EAGO.Optimizer()
-    MOI.set(m, MOI.RawParameter("absolute_tolerance"), 1E-4)
-    MOI.set(m, MOI.RawParameter("relative_tolerance"), 1E-4)
-    MOI.set(m, MOI.RawParameter("mul_relax_style"), 0)
+    MOI.set(m, MOI.RawOptimizerAttribute("absolute_tolerance"), 1E-4)
+    MOI.set(m, MOI.RawOptimizerAttribute("relative_tolerance"), 1E-4)
+    MOI.set(m, MOI.RawOptimizerAttribute("mul_relax_style"), 0)
     m
 end
 
@@ -171,6 +171,7 @@ function print_summary_tables(df_env, df_expr, fig_name, env_lib, upper_limit)
     df_comb = vcat(df_env, df_expr)
     df_comb[!,:FullSolverName] = map((x,y) -> string(x)*" "*string(y), df_comb.SolverName, df_comb.Form)
     df_comb.SolveTime = map((x,y) -> ifelse(occursin("INFEASIBLE",x), upper_limit, y), df_comb.TerminationStatus, df_comb.SolveTime)
+    df_comb.SolveTime = map(x -> min(upper_limit, x), df_comb.SolveTime)
     df_comb.ShiftedSolveTime = df_comb.SolveTime .+ 1
     df_comb.CorrectlySolved = map(x -> (occursin("OPTIMAL",x) || occursin("LOCALLY_SOLVED",x)), df_comb.TerminationStatus)
 
@@ -209,7 +210,7 @@ function print_summary_tables(df_env, df_expr, fig_name, env_lib, upper_limit)
     end
     plt = performance_profile(PlotsBackend(), trunc_solved_time, ["EAGO (Envelope)", "EAGO (McCormick)", "SCIP", "BARON"], linewidth = 1.5, linestyles=[:solid, :dash, :dashdot, :dot], legend=:bottomright)
     xlabel!("\$\\tau\$")
-    xlims!(0.0,6.5)
+    #xlims!(0.0,6.5)
     ylabel!("\$P(r_{p,s} \\leq \\tau : 1 \\leq s \\leq n_s)\$")
     ylims!(0.2,1.0)
     savefig(plt, joinpath(result_path, fig_name*".pdf"))
@@ -218,23 +219,23 @@ end
 
 result_path = joinpath(@__DIR__, "solver_benchmark_result")
 
+params = SolverBenchmarking.BenchmarkParams(time = 100, rerun = false, has_obj_bnd = true)
 params_15 = SolverBenchmarking.BenchmarkParams(time = 15*60, rerun = false, has_obj_bnd = true)
-#params = SolverBenchmarking.BenchmarkParams(time = 100, rerun = false, has_obj_bnd = true)
 
+SolverBenchmarking.run_solver_benchmark(result_path, expr_solvers, "ANN_Expr", "ANN_Expr"; params = params)
+SolverBenchmarking.run_solver_benchmark(result_path, env_solvers, "ANN_Env", "ANN_Env"; params = params)
 SolverBenchmarking.run_solver_benchmark(result_path, expr_solvers, "ANN_Expr", "ANN_Expr_15"; params = params_15)
 SolverBenchmarking.run_solver_benchmark(result_path, env_solvers, "ANN_Env", "ANN_Env_15"; params = params_15)
-#SolverBenchmarking.run_solver_benchmark(result_path, expr_solvers, "ANN_Expr", "ANN_Expr"; params = params)
-#SolverBenchmarking.run_solver_benchmark(result_path, env_solvers, "ANN_Env", "ANN_Env"; params = params)
 
+SolverBenchmarking.summarize_results("ANN_Expr", result_path)
+SolverBenchmarking.summarize_results("ANN_Env", result_path)
 SolverBenchmarking.summarize_results("ANN_Expr_15", result_path)
 SolverBenchmarking.summarize_results("ANN_Env_15", result_path)
-#SolverBenchmarking.summarize_results("ANN_Expr", result_path)
-#SolverBenchmarking.summarize_results("ANN_Env", result_path)
 
-df_expr_15 = DataFrame(CSV.File(joinpath(result_path, "ANN_Expr_15", "result_summary_15.csv")))
-df_env_15 = DataFrame(CSV.File(joinpath(result_path, "ANN_Env_15", "result_summary_15.csv")))
-#df_expr = DataFrame(CSV.File(joinpath(result_path, "ANN_Expr", "result_summary.csv")))
-#df_env = DataFrame(CSV.File(joinpath(result_path, "ANN_Env", "result_summary.csv")))
+df_expr = DataFrame(CSV.File(joinpath(result_path, "ANN_Expr", "result_summary.csv")))
+df_env = DataFrame(CSV.File(joinpath(result_path, "ANN_Env", "result_summary.csv")))
+df_expr_15 = DataFrame(CSV.File(joinpath(result_path, "ANN_Expr_15", "result_summary.csv")))
+df_env_15 = DataFrame(CSV.File(joinpath(result_path, "ANN_Env_15", "result_summary.csv")))
 
-print_summary_tables(df_env, df_expr, "performance_profile_15", "ANN_Env_15", 15*60.0)
-#print_summary_tables(df_env, df_expr, "performance_profile", "ANN_Env", 100.00)
+print_summary_tables(df_env, df_expr, "performance_profile", "ANN_Env", 100.00)
+print_summary_tables(df_env_15, df_expr_15, "performance_profile_15", "ANN_Env", 15*60.0)
