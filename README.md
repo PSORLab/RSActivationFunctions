@@ -26,5 +26,5 @@ The test_benchmark.jl file use the basic library functionality included in MINLP
 will then iterate over all optimizer factory and problem configurations specified and store the results to JSON files. Once all optimization problems are complete a .csv file summarizing the results is generated.
 
 # Associated Repositories
-- [McCormick.jl](https://github.com/PSORLab/McCormick.jl) versions 0.10 or greater implements envelopes calculations for relaxations of activaiton functions.
+- [McCormick.jl](https://github.com/PSORLab/McCormick.jl) versions 0.13 or greater implements envelopes calculations for relaxations of activation functions.
 - [EAGO.jl](https://github.com/PSORLab/EAGO.jl) versions 0.7 or greater currently uses the McCormick.jl envelopes for computing relaxations of subproblems.
