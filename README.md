@@ -1,5 +1,5 @@
 # RSActivationFunctions
-Data from Numerical Trials for Forthcoming Manuscript: "Convex and Concave Envelopes of Artificial Neural Network Activation Functions for Deterministic Global Optimization" (hyperlink and citation information will be added once the paper becomes available online)
+Data from numerical trials for the paper: "Convex and Concave Envelopes of Artificial Neural Network Activation Functions for Deterministic Global Optimization" (https://doi.org/10.1007/s10898-022-01228-x) published in the Journal of Global Optimization (2022).
 
 # Authors
 [Matthew E. Wilhelm](https://scholar.google.com/citations?user=sr4baQ0AAAAJ&hl=en&authuser=1), [Chenyu Wang](https://psor.uconn.edu/person/chenyu-wang/), [Matthew D. Stuber](https://cbe.engr.uconn.edu/person/matthew-stuber/)
